@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>商家管理</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;600;700;800&family=Noto+Serif+TC:wght@700&display=swap" rel="stylesheet">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/style.css">
+  <link rel="stylesheet" href="/admin/admin.css">
+</head>
+<body data-page="stores">
+  <div class="admin-shell">
+    <main class="admin-main">
+      <div class="page-head">
+        <div><button class="btn btn-sm menu-toggle" type="button">☰ 選單</button><h1>商家管理</h1></div>
+        <div class="toolbar"><button class="btn btn-primary" type="button" id="addStore">＋ 新增商家</button></div>
+      </div>
+
+      <section class="card" style="margin-bottom:18px">
+        <div class="table-wrap"><table class="table">
+          <thead><tr><th>排序</th><th>商家</th><th>聯絡資訊</th><th class="num">餐點數</th><th class="num">訂單數</th>
+            <th>線上接單</th><th>狀態</th><th></th></tr></thead>
+          <tbody id="rows"><tr><td colspan="8" class="empty">載入中…</td></tr></tbody>
+        </table></div>
+        <p class="muted small" style="margin:12px 0 0">
+          「停用」的商家不會出現在前台，但保留歷史訂單與報表；沒有任何訂單的商家才能刪除（會一併刪除其分類與餐點）。
+          各商家的餐點請到「餐點設定」並在左側切換目前商家。</p>
+      </section>
+
+      <section class="card">
+        <h2>管理員帳密</h2>
+        <p class="muted" style="margin:0">後台帳號與密碼由伺服器環境變數 <code>ADMIN</code>、<code>ADMIN_PASSWORD</code> 設定；
+          測試期間若設定 <code>ADMIN_AUTH_DISABLED=1</code> 則不需登入。如需變更，請到部署平台（Zeabur）修改環境變數後重新啟動服務。</p>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="dlg">
+    <form method="dialog" id="form">
+      <div class="dialog-head"><h2 id="dlgTitle">商家</h2><button class="close-x" type="button" data-close aria-label="關閉">×</button></div>
+      <div class="dialog-body">
+        <input type="hidden" name="id">
+        <div class="field"><label>商家名稱 <span class="req">*</span></label><input type="text" name="store_name" maxlength="120" required></div>
+        <div class="row">
+          <div class="field"><label>電話</label><input type="tel" name="store_phone" maxlength="120"></div>
+          <div class="field"><label>營業時間</label><input type="text" name="business_hours" maxlength="120"></div>
+        </div>
+        <div class="field"><label>地址</label><input type="text" name="store_address" maxlength="120"></div>
+        <div class="field"><label>商家介紹</label><textarea name="store_description" maxlength="500"></textarea></div>
+        <div class="field"><label>前台公告（留白則不顯示）</label><textarea name="announcement" maxlength="500" placeholder="例：今日排骨售完、颱風天提早打烊"></textarea></div>
+        <div class="row">
+          <div class="field"><label>排序（數字小的在前）</label><input type="number" name="sort_order" step="1" value="0"></div>
+          <div class="field"><label>&nbsp;</label>
+            <label class="switch"><input type="checkbox" name="is_open" checked> 開放線上接單</label>
+            <label class="switch"><input type="checkbox" name="active" checked> 啟用（顯示在前台）</label></div>
+        </div>
+      </div>
+      <div class="dialog-foot">
+        <button class="btn" type="button" data-close>取消</button>
+        <button class="btn btn-primary" type="submit">儲存</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="/assets/common.js"></script>
+  <script src="/admin/admin.js"></script>
+  <script>
+    (async function () {
+      const { api, esc, toast } = App;
+      if (!(await Admin.boot())) return;
+      const FIELDS = ['store_name', 'store_phone', 'business_hours', 'store_address', 'store_description', 'announcement'];
+      let stores = [];
+      const dlg = document.getElementById('dlg');
+      const form = document.getElementById('form');
+      dlg.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', () => dlg.close()));
+
+      async function load() {
+        stores = await api('/api/admin/stores');
+        document.getElementById('rows').innerHTML = stores.length ? stores.map((s) => `
+          <tr>
+            <td class="small muted">${s.sort_order}</td>
+            <td><strong>${esc(s.store_name)}</strong><div class="small muted">${esc(s.business_hours)}</div></td>
+            <td class="small">${esc(s.store_phone)}<div class="muted">${esc(s.store_address)}</div></td>
+            <td class="num"><a href="/admin/menu?store=${s.id}">${s.item_count}</a></td>
+            <td class="num">${s.order_count}</td>
+            <td><label class="switch"><input type="checkbox" data-open="${s.id}" ${s.is_open ? 'checked' : ''}>
+              <span class="small">${s.is_open ? '接單中' : '暫停'}</span></label></td>
+            <td>${s.active ? '<span class="badge st-ready">啟用</span>' : '<span class="badge">已停用</span>'}</td>
+            <td style="white-space:nowrap"><button class="btn btn-sm" data-edit="${s.id}">編輯</button>
+              <a class="btn btn-sm" href="/admin/menu?store=${s.id}">餐點</a>
+              <button class="btn btn-sm btn-danger" data-del="${s.id}">刪除</button></td>
+          </tr>`).join('') : '<tr><td colspan="8" class="empty">尚未建立商家</td></tr>';
+      }
+
+      function open(s) {
+        form.reset();
+        document.getElementById('dlgTitle').textContent = s ? '編輯商家' : '新增商家';
+        form.id.value = s ? s.id : '';
+        FIELDS.forEach((k) => { form[k].value = s ? (s[k] || '') : ''; });
+        form.sort_order.value = s ? s.sort_order : stores.length + 1;
+        form.is_open.checked = s ? !!s.is_open : true;
+        form.active.checked = s ? !!s.active : true;
+        dlg.showModal();
+        form.store_name.focus();
+      }
+
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const id = form.id.value;
+        const body = Object.fromEntries(FIELDS.map((k) => [k, form[k].value]));
+        body.sort_order = Number(form.sort_order.value || 0);
+        body.is_open = form.is_open.checked;
+        body.active = form.active.checked;
+        try {
+          await api(id ? `/api/admin/stores/${id}` : '/api/admin/stores', { method: id ? 'PUT' : 'POST', body });
+          dlg.close();
+          toast('商家已儲存', 'success');
+          load();
+        } catch (err) { toast(err.message, 'error'); }
+      });
+      document.getElementById('addStore').addEventListener('click', () => open(null));
+
+      document.getElementById('rows').addEventListener('click', async (e) => {
+        const t = e.target;
+        try {
+          if (t.dataset.edit) open(stores.find((s) => s.id == t.dataset.edit));
+          if (t.dataset.del) {
+            const s = stores.find((x) => x.id == t.dataset.del);
+            if (!confirm(`確定刪除商家「${s.store_name}」？\n其分類與 ${s.item_count} 項餐點也會一併刪除。`)) return;
+            await api('/api/admin/stores/' + s.id, { method: 'DELETE' });
+            toast('已刪除', 'success');
+            load();
+          }
+        } catch (err) { toast(err.message, 'error'); }
+      });
+      document.getElementById('rows').addEventListener('change', async (e) => {
+        const id = e.target.dataset.open;
+        if (!id) return;
+        try {
+          await api('/api/admin/stores/' + id, { method: 'PUT', body: { is_open: e.target.checked } });
+          toast(e.target.checked ? '已開始接單' : '已暫停接單', 'success');
+          load();
+        } catch (err) { toast(err.message, 'error'); }
+      });
+
+      await load();
+    })();
+  </script>
+</body>
+</html>

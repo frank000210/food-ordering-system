@@ -1,6 +1,6 @@
 {
   "name": "food-ordering-system",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "description": "線上訂餐系統（MongoDB）：前台點餐、訂單查詢，後台店家設定、餐點管理、訂單管理與銷售日報",
   "main": "src/server.js",
   "scripts": {

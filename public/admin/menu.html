@@ -10,11 +10,11 @@
   <link rel="stylesheet" href="/assets/style.css">
   <link rel="stylesheet" href="/admin/admin.css">
 </head>
-<body data-page="menu">
+<body data-page="menu" data-store-scope="required">
   <div class="admin-shell">
     <main class="admin-main">
       <div class="page-head">
-        <div><button class="btn btn-sm menu-toggle" type="button">☰ 選單</button><h1>餐點設定</h1></div>
+        <div><button class="btn btn-sm menu-toggle" type="button">☰ 選單</button><h1>餐點設定 <span class="muted small" id="storeName"></span></h1></div>
         <div class="toolbar">
           <button class="btn" type="button" id="addCat">＋ 新增分類</button>
           <button class="btn btn-primary" type="button" id="addItem">＋ 新增餐點</button>
@@ -86,7 +86,10 @@
   <script>
     (async function () {
       const { api, money, esc, toast } = App;
-      if (!(await Admin.boot())) return;
+      const ctx = await Admin.boot();
+      if (!ctx) return;
+      const storeId = ctx.storeId;
+      document.getElementById('storeName').textContent = ctx.store.store_name;
       let cats = [];
       let items = [];
 
@@ -94,7 +97,8 @@
         b.addEventListener('click', () => b.closest('dialog').close()));
 
       async function load() {
-        [cats, items] = await Promise.all([api('/api/admin/categories'), api('/api/admin/items')]);
+        [cats, items] = await Promise.all([api('/api/admin/categories?store_id=' + storeId),
+          api('/api/admin/items?store_id=' + storeId)]);
         document.getElementById('items').innerHTML = items.length ? items.map((m) => `
           <tr>
             <td class="small muted">${m.sort_order}</td>
@@ -140,6 +144,7 @@
         e.preventDefault();
         const id = itemForm.id.value;
         const body = {
+          store_id: storeId,
           name: itemForm.name.value, price: Number(itemForm.price.value),
           category_id: itemForm.category_id.value, description: itemForm.description.value,
           image_url: itemForm.image_url.value, sort_order: Number(itemForm.sort_order.value || 0),
@@ -170,7 +175,7 @@
       catForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         const id = catForm.id.value;
-        const body = { name: catForm.name.value, sort_order: Number(catForm.sort_order.value || 0), active: catForm.active.checked };
+        const body = { store_id: storeId, name: catForm.name.value, sort_order: Number(catForm.sort_order.value || 0), active: catForm.active.checked };
         try {
           await api(id ? `/api/admin/categories/${id}` : '/api/admin/categories', { method: id ? 'PUT' : 'POST', body });
           catDlg.close();

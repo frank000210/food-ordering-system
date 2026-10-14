@@ -18,9 +18,9 @@
 <body>
   <header class="site-header">
     <div class="container bar">
-      <a class="brand" href="/" data-store-name>線上點餐</a>
+      <a class="brand" href="/">線上訂餐</a>
       <nav class="site-nav">
-        <a href="/">點餐</a>
+        <a href="/">商家列表</a>
         <a href="/track" class="active">訂單查詢</a>
       </nav>
     </div>
@@ -29,10 +29,6 @@
   <main class="container narrow">
     <h1 style="margin:28px 0 14px">訂單查詢</h1>
     <div class="card">
-      <div class="mode-tabs" role="tablist">
-        <button type="button" class="btn" role="tab" aria-selected="true" data-mode="no">用訂單編號查詢</button>
-        <button type="button" class="btn" role="tab" aria-selected="false" data-mode="phone">用電話查詢</button>
-      </div>
       <form id="formNo">
         <div class="row">
           <div class="field">
@@ -40,25 +36,11 @@
             <input type="text" id="orderNo" placeholder="例：20261014-0001" required>
           </div>
           <div class="field">
-            <label for="contact">訂購人姓名或電話</label>
+            <label for="contact">訂購人姓名</label>
             <input type="text" id="contact" required>
           </div>
         </div>
         <button class="btn btn-primary" type="submit">查詢</button>
-      </form>
-      <form id="formPhone" class="hidden">
-        <div class="row">
-          <div class="field">
-            <label for="phone">下單時填寫的電話</label>
-            <input type="tel" id="phone" placeholder="0912-345-678" required>
-          </div>
-          <div class="field">
-            <label for="phoneName">訂購人姓名</label>
-            <input type="text" id="phoneName" required>
-          </div>
-        </div>
-        <button class="btn btn-primary" type="submit">查詢</button>
-        <p class="muted small" style="margin:10px 0 0">會列出此電話與姓名最近 20 筆訂單。</p>
       </form>
     </div>
     <div class="results" id="results"></div>
@@ -72,16 +54,6 @@
       const params = new URLSearchParams(location.search);
       if (params.get('no')) document.getElementById('orderNo').value = params.get('no');
 
-      api('/api/store').then((s) => {
-        document.querySelectorAll('[data-store-name]').forEach((el) => { el.textContent = s.store_name; });
-      }).catch(() => {});
-
-      document.querySelectorAll('[data-mode]').forEach((tab) => tab.addEventListener('click', () => {
-        document.querySelectorAll('[data-mode]').forEach((t) => t.setAttribute('aria-selected', String(t === tab)));
-        document.getElementById('formNo').classList.toggle('hidden', tab.dataset.mode !== 'no');
-        document.getElementById('formPhone').classList.toggle('hidden', tab.dataset.mode !== 'phone');
-        results.innerHTML = '';
-      }));
 
       async function search(query) {
         results.innerHTML = '<p class="empty">查詢中…</p>';
@@ -100,11 +72,6 @@
         e.preventDefault();
         search({ order_no: document.getElementById('orderNo').value.trim(),
           contact: document.getElementById('contact').value.trim() });
-      });
-      document.getElementById('formPhone').addEventListener('submit', (e) => {
-        e.preventDefault();
-        search({ phone: document.getElementById('phone').value.trim(),
-          name: document.getElementById('phoneName').value.trim() });
       });
     })();
   </script>

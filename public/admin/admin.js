@@ -1,15 +1,30 @@
-/* Admin layout: auth guard + sidebar navigation. Each admin page sets data-page on <body>. */
+/* Admin layout: auth guard, sidebar navigation and the current-store switcher.
+ * Each admin page sets data-page on <body>, plus data-store-scope:
+ *   "required" — page works on one store (menu settings)
+ *   "optional" — one store or all stores (dashboard, orders, report)
+ *   omitted    — no store switcher (store management)
+ */
 (function () {
   'use strict';
   const { api, esc } = window.App;
+  const STORE_KEY = 'admin_store_id';
 
   const NAV = [
     ['dashboard', '/admin/', '總覽'],
     ['orders', '/admin/orders', '訂單管理'],
     ['menu', '/admin/menu', '餐點設定'],
     ['report', '/admin/report', '銷售日報'],
-    ['store', '/admin/store', '商家設定'],
+    ['stores', '/admin/stores', '商家管理'],
   ];
+
+  let currentStoreId = null; // null = all stores
+
+  function readSavedStore() {
+    try { return localStorage.getItem(STORE_KEY) || ''; } catch { return ''; }
+  }
+  function saveStore(v) {
+    try { localStorage.setItem(STORE_KEY, v); } catch { /* ignore */ }
+  }
 
   async function boot() {
     let me;
@@ -19,15 +34,33 @@
       if (err.status === 401) { location.href = '/admin/login?next=' + encodeURIComponent(location.pathname); return null; }
       throw err;
     }
-    let store = {};
-    try { store = await api('/api/admin/store'); } catch { /* ignore */ }
+    let stores = [];
+    try { stores = await api('/api/admin/stores'); } catch { /* ignore */ }
 
     const page = document.body.dataset.page;
+    const scope = document.body.dataset.storeScope || '';
+    const fromUrl = new URLSearchParams(location.search).get('store');
+    let saved = fromUrl !== null ? fromUrl : readSavedStore();
+    if (!stores.some((s) => String(s.id) === saved)) saved = '';
+    if (scope === 'required' && !saved && stores.length) saved = String(stores[0].id);
+    currentStoreId = saved ? Number(saved) : null;
+
+    const storePicker = scope ? `
+      <label class="store-picker">
+        <span>目前商家</span>
+        <select id="storeSel">
+          ${scope === 'optional' ? '<option value="">全部商家</option>' : ''}
+          ${stores.map((s) => `<option value="${s.id}" ${s.id === currentStoreId ? 'selected' : ''}>
+            ${esc(s.store_name)}${s.active ? '' : '（已停用）'}</option>`).join('')}
+        </select>
+      </label>` : '';
+
     const sidebar = document.createElement('nav');
     sidebar.className = 'sidebar';
     sidebar.innerHTML = `
-      <a class="brand" href="/admin/">${esc(store.store_name || '訂餐系統')}</a>
+      <a class="brand" href="/admin/">訂餐平台</a>
       <div class="sub">後台管理</div>
+      ${storePicker}
       ${NAV.map(([key, href, label]) => `<a class="nav ${key === page ? 'active' : ''}" href="${href}">
         <span>${label}</span>${key === 'orders' ? '<span class="count hidden" id="pendingCount"></span>' : ''}</a>`).join('')}
       <div class="spacer"></div>
@@ -36,6 +69,16 @@
       ${me.auth_disabled ? '' : '<a class="nav" href="#" id="logoutBtn">登出</a>'}`;
     const shell = document.querySelector('.admin-shell');
     shell.prepend(sidebar);
+
+    const sel = document.getElementById('storeSel');
+    if (sel) {
+      sel.addEventListener('change', () => {
+        saveStore(sel.value);
+        const url = new URL(location.href);
+        url.searchParams.delete('store');
+        location.href = url.pathname + url.search;
+      });
+    }
 
     const toggle = document.querySelector('.menu-toggle');
     if (toggle) toggle.addEventListener('click', () => sidebar.classList.toggle('open'));
@@ -46,13 +89,27 @@
       location.href = '/admin/login';
     });
 
+    if (scope === 'required' && !stores.length) {
+      document.querySelector('.admin-main').innerHTML = `<div class="card empty">尚未建立任何商家，
+        請先到 <a href="/admin/stores">商家管理</a> 新增商家。</div>`;
+      return null;
+    }
+
     refreshPendingCount();
-    return { me, store };
+    const store = stores.find((s) => s.id === currentStoreId) || null;
+    return { me, stores, store, storeId: currentStoreId };
+  }
+
+  /** "store_id=N" for the current store, or "" for all stores. */
+  function storeQuery() {
+    return currentStoreId === null ? '' : 'store_id=' + currentStoreId;
   }
 
   async function refreshPendingCount() {
     try {
-      const list = await api('/api/admin/orders?status=pending');
+      const q = new URLSearchParams({ status: 'pending' });
+      if (currentStoreId !== null) q.set('store_id', currentStoreId);
+      const list = await api('/api/admin/orders?' + q);
       const el = document.getElementById('pendingCount');
       if (!el) return;
       el.textContent = list.length;
@@ -60,5 +117,5 @@
     } catch { /* ignore */ }
   }
 
-  window.Admin = { boot, refreshPendingCount };
+  window.Admin = { boot, refreshPendingCount, storeQuery, storeId: () => currentStoreId };
 })();

@@ -2,7 +2,8 @@
 const path = require('node:path');
 const { createRouter, HttpError } = require('./router');
 const { createAuth } = require('./auth');
-const { createServices, ValidationError, ORDER_STATUSES, ORDER_TYPES } = require('./services');
+const { createServices, ValidationError, ORDER_STATUSES, ORDER_TYPES, optionalStoreId, requiredStoreId }
+  = require('./services');
 const { todayLocal, isValidDate } = require('./time');
 
 const hostOf = (url) => { try { return url ? new URL(url).host.toLowerCase() : ''; } catch { return ''; } };
@@ -44,7 +45,8 @@ function createApp(db, options = {}) {
   // and the customer pages only answer on the other host(s).
   if (adminHost) {
     const isAdminPath = (p) => p === '/admin' || p.startsWith('/admin/') || p.startsWith('/api/admin/');
-    const CUSTOMER_PAGES = new Set(['/', '/index.html', '/order', '/order.html', '/track', '/track.html']);
+    const CUSTOMER_PAGES = new Set(['/', '/index.html', '/store', '/store.html', '/order', '/order.html',
+      '/track', '/track.html']);
     app.use('/', (req, res, next) => {
       const onAdminHost = requestHost(req) === adminHost;
       if (onAdminHost && CUSTOMER_PAGES.has(req.path)) {
@@ -95,11 +97,15 @@ function createApp(db, options = {}) {
     res.json({ statuses: ORDER_STATUSES, order_types: ORDER_TYPES, today: todayLocal() });
   });
 
-  app.get('/api/store', async (req, res) => res.json(await svc.getSettings()));
+  const adminLink = () => (adminUrl ? `${adminUrl}/admin/` : '/admin/');
 
-  app.get('/api/menu', async (req, res) => {
-    const [store, categories] = await Promise.all([svc.getSettings(), svc.getPublicMenu()]);
-    res.json({ store, categories, admin_url: adminUrl ? `${adminUrl}/admin/` : '/admin/' });
+  app.get('/api/stores', async (req, res) => {
+    res.json({ stores: await svc.listPublicStores(), admin_url: adminLink() });
+  });
+
+  app.get('/api/stores/:id/menu', async (req, res) => {
+    const menu = await svc.getPublicMenu(idParam(req));
+    res.json({ ...menu, admin_url: adminLink() });
   });
 
   app.post('/api/orders', async (req, res) => {
@@ -141,31 +147,51 @@ function createApp(db, options = {}) {
 
   /* ---------------------------- Admin: dashboard -------------------------- */
 
+  // ?store_id= limits the dashboard, order list and reports to one store; omit for all stores.
   app.get('/api/admin/dashboard', async (req, res) => {
+    const storeId = optionalStoreId(req.query.store_id);
     const today = todayLocal();
     const [report, active, recent, store] = await Promise.all([
-      svc.dailyReport(today), svc.activeOrderCounts(), svc.listOrders({ limit: 8 }), svc.getSettings(),
+      svc.dailyReport(today, storeId), svc.activeOrderCounts(storeId), svc.listOrders({ storeId, limit: 8 }),
+      storeId === null ? null : svc.getStore(storeId),
     ]);
     res.json({
       today,
+      store_id: storeId,
       order_count: report.order_count,
       total_revenue: report.total_revenue,
       average_order_value: report.average_order_value,
       active,
       top_items: report.items.slice(0, 5),
+      by_store: report.by_store,
       recent_orders: recent,
-      store_open: store.is_open,
+      store_open: store ? Boolean(store.is_open) : null,
     });
   });
 
-  /* ----------------------------- Admin: store ----------------------------- */
+  /* ----------------------------- Admin: stores ---------------------------- */
 
-  app.get('/api/admin/store', async (req, res) => res.json(await svc.getSettings()));
-  app.put('/api/admin/store', async (req, res) => res.json(await svc.updateSettings(req.body || {})));
+  app.get('/api/admin/stores', async (req, res) => res.json(await svc.listStores()));
+  app.post('/api/admin/stores', async (req, res) => {
+    res.status(201).json(await svc.createStore(req.body || {}));
+  });
+  app.get('/api/admin/stores/:id', async (req, res) => {
+    const { _id, ...rest } = await svc.getStore(idParam(req));
+    res.json({ id: _id, ...rest });
+  });
+  app.put('/api/admin/stores/:id', async (req, res) => {
+    res.json(await svc.updateStore(idParam(req), req.body || {}));
+  });
+  app.delete('/api/admin/stores/:id', async (req, res) => {
+    await svc.deleteStore(idParam(req));
+    res.json({ ok: true });
+  });
 
   /* --------------------------- Admin: categories -------------------------- */
 
-  app.get('/api/admin/categories', async (req, res) => res.json(await svc.listCategories()));
+  app.get('/api/admin/categories', async (req, res) => {
+    res.json(await svc.listCategories(requiredStoreId(req.query.store_id)));
+  });
   app.post('/api/admin/categories', async (req, res) => {
     res.status(201).json(await svc.createCategory(req.body || {}));
   });
@@ -179,7 +205,9 @@ function createApp(db, options = {}) {
 
   /* ---------------------------- Admin: menu items ------------------------- */
 
-  app.get('/api/admin/items', async (req, res) => res.json(await svc.listItems()));
+  app.get('/api/admin/items', async (req, res) => {
+    res.json(await svc.listItems(requiredStoreId(req.query.store_id)));
+  });
   app.post('/api/admin/items', async (req, res) => {
     res.status(201).json(await svc.createItem(req.body || {}));
   });
@@ -198,13 +226,25 @@ function createApp(db, options = {}) {
 
   app.get('/api/admin/orders', async (req, res) => {
     const date = req.query.date ? dateParam(req.query.date) : '';
-    res.json(await svc.listOrders({ date, status: req.query.status, q: String(req.query.q || '').trim() }));
+    res.json(await svc.listOrders({ storeId: optionalStoreId(req.query.store_id), date, status: req.query.status,
+      q: String(req.query.q || '').trim() }));
   });
 
   app.get('/api/admin/orders/:id', async (req, res) => {
     const order = await svc.getOrder(idParam(req));
     if (!order) throw new ValidationError('找不到訂單', 404);
     res.json(order);
+  });
+
+  // Body: { ids: [...] }. Only completed / cancelled orders are deleted; others are skipped.
+  app.post('/api/admin/orders/delete', async (req, res) => {
+    res.json(await svc.deleteOrders((req.body || {}).ids));
+  });
+
+  app.delete('/api/admin/orders/:id', async (req, res) => {
+    const r = await svc.deleteOrders([idParam(req)]);
+    if (!r.deleted) throw new ValidationError('只能刪除「已完成」或「已取消」的訂單', 409);
+    res.json({ ok: true });
   });
 
   app.patch('/api/admin/orders/:id/status', async (req, res) => {
@@ -214,22 +254,24 @@ function createApp(db, options = {}) {
   /* ----------------------------- Admin: reports --------------------------- */
 
   app.get('/api/admin/reports/daily', async (req, res) => {
-    res.json(await svc.dailyReport(dateParam(req.query.date)));
+    res.json(await svc.dailyReport(dateParam(req.query.date), optionalStoreId(req.query.store_id)));
   });
 
   app.get('/api/admin/reports/daily.csv', async (req, res) => {
-    const report = await svc.dailyReport(dateParam(req.query.date));
+    const storeId = optionalStoreId(req.query.store_id);
+    const report = await svc.dailyReport(dateParam(req.query.date), storeId);
     // Prefix cells Excel would evaluate as formulas (CSV injection via item names).
     const esc = (v) => `"${String(v).replace(/^[=+\-@\t\r]/, "'$&").replace(/"/g, '""')}"`;
-    const rows = [['餐點名稱', '單價', '銷售數量', '營收']];
-    for (const i of report.items) rows.push([i.name, i.unit_price, i.quantity, i.revenue]);
+    const rows = [['商家', '餐點名稱', '單價', '銷售數量', '營收']];
+    for (const i of report.items) rows.push([i.store_name, i.name, i.unit_price, i.quantity, i.revenue]);
     rows.push([]);
     rows.push(['訂單數', report.order_count]);
     rows.push(['總銷售數量', report.total_quantity]);
     rows.push(['總營收', report.total_revenue]);
     const csv = '﻿' + rows.map((r) => r.map(esc).join(',')).join('\r\n');
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="sales-${report.date}.csv"`);
+    const suffix = storeId === null ? 'all' : `store${storeId}`;
+    res.setHeader('Content-Disposition', `attachment; filename="sales-${report.date}-${suffix}.csv"`);
     res.send(csv);
   });
 

@@ -1,6 +1,6 @@
 'use strict';
 const crypto = require('node:crypto');
-const { nextSeq } = require('./db');
+const { nextSeq, newStoreDoc, STORE_FIELDS } = require('./db');
 const { nowLocal, todayLocal } = require('./time');
 
 const ORDER_STATUSES = {
@@ -12,6 +12,7 @@ const ORDER_STATUSES = {
   cancelled: '已取消',
 };
 const ACTIVE_STATUSES = ['pending', 'confirmed', 'preparing', 'ready'];
+const DELETABLE_STATUSES = ['completed', 'cancelled'];
 const ORDER_TYPES = { takeout: '外帶自取', dine_in: '內用', delivery: '外送' };
 const MAX_QTY_PER_ITEM = 99;
 
@@ -38,46 +39,105 @@ function safeEqual(a, b) {
   return crypto.timingSafeEqual(ha, hb);
 }
 
+/** Parse an optional store id filter ('' / undefined = all stores). */
+function optionalStoreId(v) {
+  if (v === undefined || v === null || v === '') return null;
+  const id = Number(v);
+  if (!Number.isInteger(id) || id <= 0) throw new ValidationError('商家 ID 不正確');
+  return id;
+}
+
+function requiredStoreId(v) {
+  const id = optionalStoreId(v);
+  if (id === null) throw new ValidationError('請選擇商家');
+  return id;
+}
+
 function createServices(db) {
-  const settings = db.collection('settings');
+  const stores = db.collection('stores');
   const categories = db.collection('categories');
   const menuItems = db.collection('menu_items');
   const orders = db.collection('orders');
 
-  /* ------------------------------- Settings ------------------------------- */
+  /* -------------------------------- Stores -------------------------------- */
 
-  async function getSettings() {
+  const publicStore = (s) => ({ id: s._id, ...Object.fromEntries(STORE_FIELDS.map((k) => [k, s[k] || ''])),
+    is_open: Boolean(s.is_open) });
+
+  async function listPublicStores() {
+    const rows = await stores.find({ active: true }).sort({ sort_order: 1, _id: 1 }).toArray();
+    return rows.map(publicStore);
+  }
+
+  async function listStores() {
+    const [rows, itemCounts, orderCounts] = await Promise.all([
+      stores.find().sort({ sort_order: 1, _id: 1 }).toArray(),
+      menuItems.aggregate([{ $group: { _id: '$store_id', n: { $sum: 1 } } }]).toArray(),
+      orders.aggregate([{ $group: { _id: '$store_id', n: { $sum: 1 } } }]).toArray(),
+    ]);
+    const items = new Map(itemCounts.map((r) => [r._id, r.n]));
+    const ords = new Map(orderCounts.map((r) => [r._id, r.n]));
+    return rows.map((s) => ({ ...toApi(s), item_count: items.get(s._id) || 0, order_count: ords.get(s._id) || 0 }));
+  }
+
+  async function getStore(id) {
+    const s = await stores.findOne({ _id: id });
+    if (!s) throw new ValidationError('找不到商家', 404);
+    return s;
+  }
+
+  /** Validate store fields. With partial=true only the given keys are checked/returned. */
+  function readStore(body, { partial = false } = {}) {
     const out = {};
-    for (const row of await settings.find().toArray()) out[row._id] = row.value;
-    out.is_open = out.is_open === '1';
+    for (const k of STORE_FIELDS) {
+      if (partial && !(k in body)) continue;
+      out[k] = str(body[k], k === 'store_description' || k === 'announcement' ? 500 : 120);
+    }
+    if ((!partial || 'store_name' in body) && !out.store_name) throw new ValidationError('商家名稱不可空白');
+    if (!partial || 'is_open' in body) out.is_open = body.is_open === undefined ? true : Boolean(body.is_open);
+    if (!partial || 'active' in body) out.active = body.active === undefined ? true : Boolean(body.active);
+    if (!partial || 'sort_order' in body) {
+      out.sort_order = Number.isInteger(Number(body.sort_order)) ? Number(body.sort_order) : 0;
+    }
     return out;
   }
 
-  async function updateSettings(input) {
-    const allowed = ['store_name', 'store_phone', 'store_address', 'business_hours',
-      'store_description', 'announcement'];
-    if ('store_name' in input && !str(input.store_name, 120)) throw new ValidationError('商家名稱不可空白');
-    const ops = [];
-    for (const key of allowed) {
-      if (key in input) {
-        const value = str(input[key], key === 'store_description' || key === 'announcement' ? 500 : 120);
-        ops.push({ updateOne: { filter: { _id: key }, update: { $set: { value } }, upsert: true } });
-      }
+  async function createStore(body) {
+    const fields = readStore(body);
+    const doc = { ...newStoreDoc(await nextSeq(db, 'stores'), fields, fields.sort_order), ...fields };
+    await stores.insertOne(doc);
+    return toApi(doc);
+  }
+
+  async function updateStore(id, body) {
+    const fields = readStore(body, { partial: true });
+    const doc = await stores.findOneAndUpdate({ _id: id }, { $set: { ...fields, updated_at: nowLocal() } },
+      { returnDocument: 'after' });
+    if (!doc) throw new ValidationError('找不到商家', 404);
+    return toApi(doc);
+  }
+
+  /** Stores with orders cannot be deleted (history and reports need them); deactivate instead. */
+  async function deleteStore(id) {
+    await getStore(id);
+    if (await orders.countDocuments({ store_id: id }, { limit: 1 })) {
+      throw new ValidationError('此商家已有訂單紀錄，無法刪除；如不再營業請改為「停用」', 409);
     }
-    if ('is_open' in input) {
-      ops.push({ updateOne: { filter: { _id: 'is_open' },
-        update: { $set: { value: input.is_open ? '1' : '0' } }, upsert: true } });
-    }
-    if (ops.length) await settings.bulkWrite(ops);
-    return getSettings();
+    await Promise.all([
+      stores.deleteOne({ _id: id }),
+      categories.deleteMany({ store_id: id }),
+      menuItems.deleteMany({ store_id: id }),
+    ]);
   }
 
   /* --------------------------------- Menu --------------------------------- */
 
-  async function getPublicMenu() {
-    const cats = await categories.find({ active: 1 }).sort({ sort_order: 1, _id: 1 }).toArray();
+  async function getPublicMenu(storeId) {
+    const store = await stores.findOne({ _id: storeId, active: true });
+    if (!store) throw new ValidationError('找不到商家', 404);
+    const cats = await categories.find({ store_id: storeId, active: 1 }).sort({ sort_order: 1, _id: 1 }).toArray();
     const activeIds = new Set(cats.map((c) => c._id));
-    const items = (await menuItems.find({ available: 1 }).sort({ sort_order: 1, _id: 1 }).toArray())
+    const items = (await menuItems.find({ store_id: storeId, available: 1 }).sort({ sort_order: 1, _id: 1 }).toArray())
       .filter((m) => m.category_id === null || activeIds.has(m.category_id))
       .map((m) => ({ id: m._id, category_id: m.category_id, name: m.name, description: m.description,
         price: m.price, image_url: m.image_url }));
@@ -85,7 +145,7 @@ function createServices(db) {
       items: items.filter((i) => i.category_id === c._id) }));
     const uncategorized = items.filter((i) => i.category_id === null);
     if (uncategorized.length) result.push({ id: null, name: '其他', items: uncategorized });
-    return result.filter((c) => c.items.length > 0);
+    return { store: publicStore(store), categories: result.filter((c) => c.items.length > 0) };
   }
 
   function readCategory(body) {
@@ -95,25 +155,27 @@ function createServices(db) {
       active: body.active === false || body.active === 0 ? 0 : 1 };
   }
 
-  async function listCategories() {
+  async function listCategories(storeId) {
     const [cats, counts] = await Promise.all([
-      categories.find().sort({ sort_order: 1, _id: 1 }).toArray(),
-      menuItems.aggregate([{ $group: { _id: '$category_id', n: { $sum: 1 } } }]).toArray(),
+      categories.find({ store_id: storeId }).sort({ sort_order: 1, _id: 1 }).toArray(),
+      menuItems.aggregate([{ $match: { store_id: storeId } },
+        { $group: { _id: '$category_id', n: { $sum: 1 } } }]).toArray(),
     ]);
     const countMap = new Map(counts.map((c) => [c._id, c.n]));
     return cats.map((c) => ({ ...toApi(c), item_count: countMap.get(c._id) || 0 }));
   }
 
   async function createCategory(body) {
-    const c = readCategory(body);
-    const doc = { _id: await nextSeq(db, 'categories'), ...c };
+    const storeId = requiredStoreId(body.store_id);
+    await getStore(storeId);
+    const doc = { _id: await nextSeq(db, 'categories'), store_id: storeId, ...readCategory(body) };
     await categories.insertOne(doc);
     return toApi(doc);
   }
 
   async function updateCategory(id, body) {
-    const c = readCategory(body);
-    const doc = await categories.findOneAndUpdate({ _id: id }, { $set: c }, { returnDocument: 'after' });
+    const doc = await categories.findOneAndUpdate({ _id: id }, { $set: readCategory(body) },
+      { returnDocument: 'after' });
     if (!doc) throw new ValidationError('找不到分類', 404);
     return toApi(doc);
   }
@@ -124,14 +186,14 @@ function createServices(db) {
     await menuItems.updateMany({ category_id: id }, { $set: { category_id: null } });
   }
 
-  async function readItem(body) {
+  async function readItem(body, storeId) {
     const name = str(body.name, 60);
     if (!name) throw new ValidationError('餐點名稱不可空白');
     const price = Number(body.price);
     if (!Number.isInteger(price) || price < 0 || price > 100000) throw new ValidationError('價格需為 0–100000 的整數');
     const categoryId = body.category_id === '' || body.category_id == null ? null : Number(body.category_id);
-    if (categoryId !== null && !(await categories.findOne({ _id: categoryId }))) {
-      throw new ValidationError('分類不存在');
+    if (categoryId !== null && !(await categories.findOne({ _id: categoryId, store_id: storeId }))) {
+      throw new ValidationError('分類不存在或不屬於此商家');
     }
     const imageUrl = str(body.image_url, 500);
     if (imageUrl && !/^https?:\/\//i.test(imageUrl) && !imageUrl.startsWith('/')) {
@@ -146,8 +208,9 @@ function createServices(db) {
     };
   }
 
-  async function listItems() {
-    const [items, cats] = await Promise.all([menuItems.find().toArray(), categories.find().toArray()]);
+  async function listItems(storeId) {
+    const [items, cats] = await Promise.all([
+      menuItems.find({ store_id: storeId }).toArray(), categories.find({ store_id: storeId }).toArray()]);
     const catMap = new Map(cats.map((c) => [c._id, c]));
     const key = (m) => {
       const c = catMap.get(m.category_id);
@@ -162,18 +225,21 @@ function createServices(db) {
   }
 
   async function createItem(body) {
-    const i = await readItem(body);
+    const storeId = requiredStoreId(body.store_id);
+    await getStore(storeId);
+    const i = await readItem(body, storeId);
     const now = nowLocal();
-    const doc = { _id: await nextSeq(db, 'menu_items'), ...i, created_at: now, updated_at: now };
+    const doc = { _id: await nextSeq(db, 'menu_items'), store_id: storeId, ...i, created_at: now, updated_at: now };
     await menuItems.insertOne(doc);
     return toApi(doc);
   }
 
   async function updateItem(id, body) {
-    const i = await readItem(body);
+    const existing = await menuItems.findOne({ _id: id });
+    if (!existing) throw new ValidationError('找不到餐點', 404);
+    const i = await readItem(body, existing.store_id);
     const doc = await menuItems.findOneAndUpdate({ _id: id }, { $set: { ...i, updated_at: nowLocal() } },
       { returnDocument: 'after' });
-    if (!doc) throw new ValidationError('找不到餐點', 404);
     return toApi(doc);
   }
 
@@ -198,8 +264,9 @@ function createServices(db) {
       id: _id,
       ...rest,
       status_label: ORDER_STATUSES[order.status] || order.status,
-      order_type_label: ORDER_TYPES[order.order_type] || order.order_type,
     };
+    // Orders placed before the form was simplified may still carry a dining type.
+    if (order.order_type) out.order_type_label = ORDER_TYPES[order.order_type] || order.order_type;
     if (withToken) out.access_token = token;
     return out;
   }
@@ -210,22 +277,19 @@ function createServices(db) {
   }
 
   /**
-   * Create an order. Prices always come from the database, never from the client.
+   * Create an order for one store. Prices always come from the database, never from the client,
+   * and every item must belong to that store.
    */
   async function createOrder(input) {
-    const store = await getSettings();
-    if (!store.is_open) throw new ValidationError('店家目前暫停接單，請稍後再試', 409);
+    const storeId = requiredStoreId(input.store_id);
+    const store = await stores.findOne({ _id: storeId, active: true });
+    if (!store) throw new ValidationError('找不到商家', 404);
+    if (!store.is_open) throw new ValidationError(`「${store.store_name}」目前暫停接單，請稍後再試`, 409);
 
     const customerName = str(input.customer_name, 50);
-    const customerPhone = str(input.customer_phone, 20);
-    const orderType = Object.hasOwn(ORDER_TYPES, input.order_type) ? input.order_type : 'takeout';
-    const pickupTime = str(input.pickup_time, 30);
     const note = str(input.note, 300);
 
     if (!customerName) throw new ValidationError('請輸入顧客名稱');
-    if (customerPhone && !/^[0-9+\-() ]{6,20}$/.test(customerPhone)) {
-      throw new ValidationError('電話格式不正確');
-    }
     if (!Array.isArray(input.items) || input.items.length === 0) {
       throw new ValidationError('請至少選擇一項餐點');
     }
@@ -243,6 +307,9 @@ function createServices(db) {
 
     const found = await menuItems.find({ _id: { $in: [...merged.keys()] } }).toArray();
     const itemMap = new Map(found.map((m) => [m._id, m]));
+    if (found.some((m) => m.store_id !== storeId)) {
+      throw new ValidationError('同一張訂單只能包含同一家商家的餐點');
+    }
     const catIds = [...new Set(found.map((m) => m.category_id).filter((c) => c !== null))];
     const inactiveCats = new Set((await categories.find({ _id: { $in: catIds }, active: 0 }).toArray())
       .map((c) => c._id));
@@ -265,12 +332,11 @@ function createServices(db) {
     const seq = await nextSeq(db, `order_no:${compact}`);
     const doc = {
       _id: await nextSeq(db, 'orders'),
+      store_id: storeId,
+      store_name: store.store_name,
       order_no: `${compact}-${String(seq).padStart(4, '0')}`,
       access_token: crypto.randomBytes(16).toString('hex'),
       customer_name: customerName,
-      customer_phone: customerPhone,
-      order_type: orderType,
-      pickup_time: pickupTime,
       note,
       total,
       status: 'pending',
@@ -293,38 +359,25 @@ function createServices(db) {
     return decorateOrder(order, { withToken: true });
   }
 
-  /**
-   * Customer-side lookup. Needs order no + matching name/phone,
-   * or phone + matching name (so a phone number alone does not reveal someone's orders).
-   */
-  async function lookupOrders({ order_no: orderNo, contact, phone, name }) {
+  /** Customer-side lookup: order number plus the orderer's name. */
+  async function lookupOrders({ order_no: orderNo, contact }) {
     orderNo = str(orderNo, 20);
     contact = str(contact, 50);
-    phone = str(phone, 20);
-    name = str(name, 50);
-    if (orderNo) {
-      if (!contact) throw new ValidationError('請輸入訂購人姓名或電話以驗證訂單');
-      const order = await orders.findOne({ order_no: orderNo });
-      if (!order || (order.customer_name !== contact && order.customer_phone !== contact)) return [];
-      return [decorateOrder(order)];
-    }
-    if (phone) {
-      if (phone.replace(/\D/g, '').length < 6) throw new ValidationError('請輸入完整電話號碼');
-      if (!name) throw new ValidationError('請輸入訂購人姓名以驗證身分');
-      const rows = await orders.find({ customer_phone: phone, customer_name: name })
-        .sort({ _id: -1 }).limit(20).toArray();
-      return rows.map((o) => decorateOrder(o));
-    }
-    throw new ValidationError('請輸入訂單編號或電話');
+    if (!orderNo) throw new ValidationError('請輸入訂單編號');
+    if (!contact) throw new ValidationError('請輸入訂購人姓名以驗證訂單');
+    const order = await orders.findOne({ order_no: orderNo });
+    if (!order || order.customer_name !== contact) return [];
+    return [decorateOrder(order)];
   }
 
-  async function listOrders({ date, status, q: keyword, limit = 200 }) {
+  async function listOrders({ storeId = null, date, status, q: keyword, limit = 200 }) {
     const filter = {};
+    if (storeId !== null) filter.store_id = storeId;
     if (date) filter.order_date = date;
     if (status && Object.hasOwn(ORDER_STATUSES, status)) filter.status = status;
     if (keyword) {
       const re = new RegExp(escapeRegex(String(keyword).slice(0, 50)), 'i');
-      filter.$or = [{ order_no: re }, { customer_name: re }, { customer_phone: re }];
+      filter.$or = [{ order_no: re }, { customer_name: re }];
     }
     const rows = await orders.find(filter).sort({ _id: -1 })
       .limit(Math.min(Number(limit) || 200, 500)).toArray();
@@ -334,9 +387,11 @@ function createServices(db) {
     });
   }
 
-  async function activeOrderCounts() {
+  async function activeOrderCounts(storeId = null) {
+    const match = { status: { $in: ACTIVE_STATUSES } };
+    if (storeId !== null) match.store_id = storeId;
     const rows = await orders.aggregate([
-      { $match: { status: { $in: ACTIVE_STATUSES } } },
+      { $match: match },
       { $group: { _id: '$status', n: { $sum: 1 } } },
     ]).toArray();
     return Object.fromEntries(rows.map((r) => [r._id, r.n]));
@@ -350,23 +405,51 @@ function createServices(db) {
     return decorateOrder(doc);
   }
 
-  /** Daily sales report. Cancelled orders are excluded from sales figures. */
-  async function dailyReport(date) {
-    const dayOrders = await orders.find({ order_date: date }).toArray();
+  /**
+   * Delete finished orders. Only completed / cancelled orders can be removed, so an order
+   * still being prepared can never disappear by accident. Deleted orders leave the reports.
+   */
+  async function deleteOrders(ids) {
+    if (!Array.isArray(ids) || ids.length === 0) throw new ValidationError('請選擇要刪除的訂單');
+    if (ids.length > 500) throw new ValidationError('一次最多刪除 500 筆');
+    const clean = ids.map(Number);
+    if (clean.some((id) => !Number.isInteger(id) || id <= 0)) throw new ValidationError('訂單 ID 不正確');
+    const r = await orders.deleteMany({ _id: { $in: clean }, status: { $in: DELETABLE_STATUSES } });
+    return { deleted: r.deletedCount, skipped: clean.length - r.deletedCount };
+  }
+
+  /**
+   * Daily sales report for one store, or all stores when storeId is null.
+   * Cancelled orders are excluded from sales figures.
+   */
+  async function dailyReport(date, storeId = null) {
+    const filter = { order_date: date };
+    if (storeId !== null) filter.store_id = storeId;
+    const dayOrders = await orders.find(filter).toArray();
     const valid = dayOrders.filter((o) => o.status !== 'cancelled');
     const cancelled = dayOrders.filter((o) => o.status === 'cancelled');
 
     const itemMap = new Map();
     for (const o of valid) {
       for (const i of o.items) {
-        const key = `${i.item_name}\u0000${i.unit_price}`;
-        const rec = itemMap.get(key) || { name: i.item_name, unit_price: i.unit_price, quantity: 0, revenue: 0 };
+        const key = `${o.store_id}\u0000${i.item_name}\u0000${i.unit_price}`;
+        const rec = itemMap.get(key) || { store_id: o.store_id, store_name: o.store_name,
+          name: i.item_name, unit_price: i.unit_price, quantity: 0, revenue: 0 };
         rec.quantity += i.quantity;
         rec.revenue += i.subtotal;
         itemMap.set(key, rec);
       }
     }
     const items = [...itemMap.values()].sort((a, b) => b.revenue - a.revenue || b.quantity - a.quantity);
+
+    const storeMap = new Map();
+    for (const o of valid) {
+      const rec = storeMap.get(o.store_id) || { store_id: o.store_id, store_name: o.store_name, orders: 0, revenue: 0 };
+      rec.orders += 1;
+      rec.revenue += o.total;
+      storeMap.set(o.store_id, rec);
+    }
+    const byStore = [...storeMap.values()].sort((a, b) => b.revenue - a.revenue);
 
     const statusMap = new Map();
     for (const o of dayOrders) statusMap.set(o.status, (statusMap.get(o.status) || 0) + 1);
@@ -386,6 +469,7 @@ function createServices(db) {
     const totalRevenue = valid.reduce((s, o) => s + o.total, 0);
     return {
       date,
+      store_id: storeId,
       order_count: valid.length,
       total_quantity: items.reduce((s, i) => s + i.quantity, 0),
       total_revenue: totalRevenue,
@@ -393,18 +477,20 @@ function createServices(db) {
       cancelled_count: cancelled.length,
       cancelled_amount: cancelled.reduce((s, o) => s + o.total, 0),
       items,
+      by_store: byStore,
       by_status: byStatus,
       hourly,
     };
   }
 
   return {
-    getSettings, updateSettings, getPublicMenu,
+    listPublicStores, listStores, getStore, createStore, updateStore, deleteStore,
+    getPublicMenu,
     listCategories, createCategory, updateCategory, deleteCategory,
     listItems, createItem, updateItem, setItemAvailability, deleteItem,
-    createOrder, viewOrder, getOrder, lookupOrders, listOrders, activeOrderCounts, updateOrderStatus,
+    createOrder, viewOrder, getOrder, lookupOrders, listOrders, activeOrderCounts, updateOrderStatus, deleteOrders,
     dailyReport,
   };
 }
 
-module.exports = { createServices, ValidationError, ORDER_STATUSES, ORDER_TYPES };
+module.exports = { createServices, ValidationError, ORDER_STATUSES, ORDER_TYPES, optionalStoreId, requiredStoreId };

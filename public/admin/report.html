@@ -10,12 +10,12 @@
   <link rel="stylesheet" href="/assets/style.css">
   <link rel="stylesheet" href="/admin/admin.css">
 </head>
-<body data-page="report">
+<body data-page="report" data-store-scope="optional">
   <div class="admin-shell">
     <main class="admin-main">
       <div class="page-head">
         <div><button class="btn btn-sm menu-toggle" type="button">☰ 選單</button>
-          <h1>銷售日報 <span class="muted small" id="title"></span></h1></div>
+          <h1><span id="scopeName"></span>銷售日報 <span class="muted small" id="title"></span></h1></div>
         <div class="toolbar">
           <button class="btn btn-sm" type="button" id="prev" aria-label="前一天">‹</button>
           <input type="date" id="date" aria-label="日期">
@@ -35,11 +35,19 @@
       <section class="card" style="margin-bottom:18px">
         <h2>各餐點銷售</h2>
         <div class="table-wrap"><table class="table">
-          <thead><tr><th>#</th><th>餐點名稱</th><th class="num">單價</th><th class="num">銷售數</th><th class="num">營收</th><th>營收占比</th></tr></thead>
+          <thead><tr><th>#</th><th>餐點名稱</th><th class="store-col">商家</th><th class="num">單價</th><th class="num">銷售數</th><th class="num">營收</th><th>營收占比</th></tr></thead>
           <tbody id="items"></tbody>
-          <tfoot><tr><td></td><td>合計</td><td></td><td class="num" id="fQty"></td><td class="num" id="fRev"></td><td></td></tr></tfoot>
+          <tfoot><tr><td></td><td>合計</td><td class="store-col"></td><td></td><td class="num" id="fQty"></td><td class="num" id="fRev"></td><td></td></tr></tfoot>
         </table></div>
         <p class="muted small" style="margin:12px 0 0" id="note"></p>
+      </section>
+
+      <section class="card store-col" style="margin-bottom:18px">
+        <h2>各商家營收</h2>
+        <div class="table-wrap"><table class="table">
+          <thead><tr><th>商家</th><th class="num">訂單</th><th class="num">營收</th></tr></thead>
+          <tbody id="byStore"></tbody>
+        </table></div>
       </section>
 
       <div class="grid-2">
@@ -65,7 +73,13 @@
   <script>
     (async function () {
       const { api, money, esc, statusBadge, toast } = App;
-      if (!(await Admin.boot())) return;
+      const ctx = await Admin.boot();
+      if (!ctx) return;
+      const allStores = ctx.storeId === null;
+      document.getElementById('scopeName').textContent = (ctx.store ? ctx.store.store_name : '全部商家') + '｜';
+      // Store columns only make sense when all stores are shown.
+      document.querySelectorAll('.store-col').forEach((el) => el.classList.toggle('hidden', !allStores));
+      const storeQ = Admin.storeQuery() ? '&' + Admin.storeQuery() : '';
       const dateInput = document.getElementById('date');
       const params = new URLSearchParams(location.search);
       dateInput.value = params.get('date') || (await api('/api/meta')).today;
@@ -80,9 +94,9 @@
       async function load() {
         const date = dateInput.value;
         history.replaceState(null, '', '?date=' + date);
-        document.getElementById('csv').href = '/api/admin/reports/daily.csv?date=' + date;
+        document.getElementById('csv').href = '/api/admin/reports/daily.csv?date=' + date + storeQ;
         try {
-          const r = await api('/api/admin/reports/daily?date=' + date);
+          const r = await api('/api/admin/reports/daily?date=' + date + storeQ);
           document.getElementById('title').textContent = r.date;
           document.getElementById('sRevenue').textContent = money(r.total_revenue);
           document.getElementById('sOrders').textContent = r.order_count;
@@ -91,11 +105,15 @@
           const max = Math.max(1, ...r.items.map((i) => i.revenue));
           document.getElementById('items').innerHTML = r.items.length ? r.items.map((i, idx) => `
             <tr><td class="muted">${idx + 1}</td><td><strong>${esc(i.name)}</strong></td>
+              <td class="store-col small${allStores ? '' : ' hidden'}">${esc(i.store_name || '')}</td>
               <td class="num">${money(i.unit_price)}</td><td class="num">${i.quantity}</td>
               <td class="num">${money(i.revenue)}</td>
               <td><div class="bar-cell"><div class="bar-track"><div class="bar-fill" style="width:${(i.revenue / max * 100).toFixed(1)}%"></div></div>
                 <span class="small num">${r.total_revenue ? (i.revenue / r.total_revenue * 100).toFixed(1) : 0}%</span></div></td></tr>`).join('')
-            : '<tr><td colspan="6" class="empty">當日沒有銷售紀錄</td></tr>';
+            : '<tr><td colspan="7" class="empty">當日沒有銷售紀錄</td></tr>';
+          document.getElementById('byStore').innerHTML = r.by_store.length ? r.by_store.map((s) => `
+            <tr><td>${esc(s.store_name)}</td><td class="num">${s.orders}</td><td class="num">${money(s.revenue)}</td></tr>`).join('')
+            : '<tr><td colspan="3" class="empty">—</td></tr>';
           document.getElementById('fQty').textContent = r.total_quantity;
           document.getElementById('fRev').textContent = money(r.total_revenue);
           document.getElementById('note').textContent = r.cancelled_count

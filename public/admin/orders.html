@@ -10,7 +10,7 @@
   <link rel="stylesheet" href="/assets/style.css">
   <link rel="stylesheet" href="/admin/admin.css">
 </head>
-<body data-page="orders">
+<body data-page="orders" data-store-scope="optional">
   <div class="admin-shell">
     <main class="admin-main">
       <div class="page-head">
@@ -18,7 +18,7 @@
         <form class="toolbar" id="filters">
           <input type="date" id="fDate" aria-label="日期">
           <select id="fStatus" aria-label="狀態"><option value="">全部狀態</option></select>
-          <input type="search" id="fQ" placeholder="編號 / 姓名 / 電話" aria-label="關鍵字">
+          <input type="search" id="fQ" placeholder="編號 / 姓名" aria-label="關鍵字">
           <button class="btn btn-sm btn-primary" type="submit">查詢</button>
           <button class="btn btn-sm" type="button" id="fAll">清除條件</button>
         </form>
@@ -26,11 +26,16 @@
 
       <section class="card">
         <div class="table-wrap"><table class="table">
-          <thead><tr><th>訂單編號</th><th>下單時間</th><th>顧客</th><th>電話</th><th>方式</th>
+          <thead><tr><th class="check"><input type="checkbox" id="checkAll" aria-label="全選可刪除的訂單"></th>
+            <th>訂單編號</th><th>下單時間</th><th>商家</th><th>顧客</th>
             <th class="num">份數</th><th class="num">金額</th><th>狀態</th><th></th></tr></thead>
           <tbody id="rows"><tr><td colspan="9" class="empty">載入中…</td></tr></tbody>
           <tfoot><tr><td colspan="6" id="sumLabel"></td><td class="num" id="sumTotal"></td><td colspan="2"></td></tr></tfoot>
         </table></div>
+        <div class="bulk-bar">
+          <button class="btn btn-sm btn-danger" type="button" id="delSelected" disabled>刪除勾選的訂單</button>
+          <span class="muted small">只有「已完成」或「已取消」的訂單可以勾選刪除；刪除後不會再出現在銷售日報。</span>
+        </div>
       </section>
     </main>
   </div>
@@ -50,6 +55,8 @@
     (async function () {
       const { api, money, esc, statusBadge, renderOrder, toast } = App;
       if (!(await Admin.boot())) return;
+      const DELETABLE = ['completed', 'cancelled'];
+      let current = [];
       const meta = await api('/api/meta');
       const fStatus = document.getElementById('fStatus');
       for (const [k, v] of Object.entries(meta.statuses)) fStatus.insertAdjacentHTML('beforeend', `<option value="${k}">${v}</option>`);
@@ -68,14 +75,18 @@
           status: fStatus.value,
           q: document.getElementById('fQ').value.trim(),
         });
+        if (Admin.storeId() !== null) q.set('store_id', Admin.storeId());
         const list = await api('/api/admin/orders?' + q);
+        current = list;
+        document.getElementById('checkAll').checked = false;
+        updateBulk();
         document.getElementById('rows').innerHTML = list.length ? list.map((o) => `
           <tr>
+            <td class="check">${DELETABLE.includes(o.status) ? `<input type="checkbox" data-check="${o.id}" aria-label="選取 ${esc(o.order_no)}">` : ''}</td>
             <td><strong>${esc(o.order_no)}</strong></td>
             <td class="small">${esc(o.created_at.slice(5, 16))}</td>
+            <td class="small">${esc(o.store_name || '')}</td>
             <td>${esc(o.customer_name)}</td>
-            <td class="small">${esc(o.customer_phone)}</td>
-            <td class="small">${esc(o.order_type_label)}</td>
             <td class="num">${o.item_count}</td>
             <td class="num">${money(o.total)}</td>
             <td>${statusBadge(o.status, o.status_label)}</td>
@@ -93,8 +104,19 @@
         const o = await api('/api/admin/orders/' + id);
         document.getElementById('dlgBody').innerHTML = renderOrder(o);
         document.getElementById('dlgActions').innerHTML = (NEXT[o.status] || []).map((s) =>
-          `<button class="btn ${s === 'cancelled' ? 'btn-danger' : 'btn-primary'}" data-status="${s}">改為「${meta.statuses[s]}」</button>`).join('');
+          `<button class="btn ${s === 'cancelled' ? 'btn-danger' : 'btn-primary'}" data-status="${s}">改為「${meta.statuses[s]}」</button>`).join('')
+          + (DELETABLE.includes(o.status) ? '<button class="btn btn-danger" data-delete>刪除此訂單</button>' : '');
         document.getElementById('dlgActions').onclick = async (e) => {
+          if (e.target.closest('[data-delete]')) {
+            if (!confirm(`確定刪除訂單 ${o.order_no}？刪除後無法復原，也不會再計入銷售日報。`)) return;
+            try {
+              await api('/api/admin/orders/' + id, { method: 'DELETE' });
+              toast('訂單已刪除', 'success');
+              dlg.close();
+              load();
+            } catch (err) { toast(err.message, 'error'); }
+            return;
+          }
           const b = e.target.closest('[data-status]');
           if (!b) return;
           if (b.dataset.status === 'cancelled' && !confirm('確定要取消這筆訂單嗎？')) return;
@@ -108,6 +130,30 @@
         };
         if (!dlg.open) dlg.showModal();
       }
+
+      function selectedIds() {
+        return [...document.querySelectorAll('[data-check]:checked')].map((c) => Number(c.dataset.check));
+      }
+      function updateBulk() {
+        const n = selectedIds().length;
+        const btn = document.getElementById('delSelected');
+        btn.disabled = n === 0;
+        btn.textContent = n ? `刪除勾選的訂單（${n} 筆）` : '刪除勾選的訂單';
+      }
+      document.getElementById('rows').addEventListener('change', (e) => { if (e.target.dataset.check) updateBulk(); });
+      document.getElementById('checkAll').addEventListener('change', (e) => {
+        document.querySelectorAll('[data-check]').forEach((c) => { c.checked = e.target.checked; });
+        updateBulk();
+      });
+      document.getElementById('delSelected').addEventListener('click', async () => {
+        const ids = selectedIds();
+        if (!ids.length || !confirm(`確定刪除 ${ids.length} 筆已完成／已取消的訂單？刪除後無法復原。`)) return;
+        try {
+          const r = await api('/api/admin/orders/delete', { method: 'POST', body: { ids } });
+          toast(`已刪除 ${r.deleted} 筆訂單`, 'success');
+          load();
+        } catch (err) { toast(err.message, 'error'); }
+      });
 
       document.getElementById('rows').addEventListener('click', (e) => {
         const b = e.target.closest('[data-open]');

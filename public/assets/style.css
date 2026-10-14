@@ -120,6 +120,17 @@ textarea { resize: vertical; min-height: 64px; }
 .site-nav { display: flex; gap: 4px; }
 .site-nav a { color: #e9dfd2; text-decoration: none; padding: 6px 12px; border-radius: 999px; font-weight: 600; font-size: 14px; }
 .site-nav a.active, .site-nav a:hover { background: rgba(255,255,255,.12); color: #fff; }
+.store-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; margin: 24px 0 48px; }
+.store-card { display: flex; flex-direction: column; gap: 8px; color: inherit; text-decoration: none; transition: border-color .15s, box-shadow .15s; }
+.store-card:hover { border-color: var(--accent); box-shadow: 0 6px 20px rgba(60,40,20,.08); }
+.store-card.closed { opacity: .7; }
+.store-card-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.store-card-head h2 { margin: 0; font-size: 19px; }
+.store-card p { margin: 0; }
+.store-card-meta { display: flex; flex-direction: column; gap: 2px; }
+.store-card .announcement { margin: 4px 0 0; }
+.store-card-cta { margin-top: auto; padding-top: 6px; color: var(--accent); font-weight: 700; font-size: 14px; }
+.back-link { display: inline-block; margin-bottom: 6px; text-decoration: none; font-weight: 600; }
 .site-nav a.nav-admin { margin-left: 8px; border: 1px solid rgba(255,255,255,.35); }
 
 .hero { padding: 32px 0 20px; border-bottom: 1px solid var(--line); }

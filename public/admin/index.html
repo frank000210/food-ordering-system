@@ -10,15 +10,15 @@
   <link rel="stylesheet" href="/assets/style.css">
   <link rel="stylesheet" href="/admin/admin.css">
 </head>
-<body data-page="dashboard">
+<body data-page="dashboard" data-store-scope="optional">
   <div class="admin-shell">
     <main class="admin-main">
       <div class="page-head">
         <div><button class="btn btn-sm menu-toggle" type="button">☰ 選單</button>
-          <h1>今日總覽 <span class="muted small" id="today"></span></h1></div>
+          <h1><span id="scopeName"></span>今日總覽 <span class="muted small" id="today"></span></h1></div>
         <div class="toolbar">
-          <span id="openPill" class="open-pill"></span>
-          <button class="btn btn-sm" id="toggleOpen" type="button"></button>
+          <span id="openPill" class="open-pill hidden"></span>
+          <button class="btn btn-sm hidden" id="toggleOpen" type="button"></button>
         </div>
       </div>
 
@@ -52,31 +52,37 @@
   <script>
     (async function () {
       const { api, money, esc, statusBadge, toast } = App;
-      if (!(await Admin.boot())) return;
+      const ctx = await Admin.boot();
+      if (!ctx) return;
+      if (ctx.store) document.getElementById('scopeName').textContent = ctx.store.store_name + '｜';
+      else document.getElementById('scopeName').textContent = '全部商家｜';
 
       async function load() {
-        const d = await api('/api/admin/dashboard');
+        const d = await api('/api/admin/dashboard?' + Admin.storeQuery());
         document.getElementById('today').textContent = d.today;
         document.getElementById('sOrders').textContent = d.order_count;
         document.getElementById('sRevenue').textContent = money(d.total_revenue);
         document.getElementById('sAvg').textContent = money(d.average_order_value);
         document.getElementById('sActive').textContent = Object.values(d.active).reduce((a, b) => a + b, 0);
         const pill = document.getElementById('openPill');
-        pill.textContent = d.store_open ? '接單中' : '暫停接單';
-        pill.className = 'open-pill ' + (d.store_open ? 'on' : 'off');
         const btn = document.getElementById('toggleOpen');
+        // Open/close applies to one store, so it only shows when a store is selected.
+        pill.classList.toggle('hidden', d.store_open === null);
+        btn.classList.toggle('hidden', d.store_open === null);
+        pill.textContent = d.store_open ? '接單中' : '暫停接單';
+        pill.className = 'open-pill ' + (d.store_open ? 'on' : 'off') + (d.store_open === null ? ' hidden' : '');
         btn.textContent = d.store_open ? '暫停接單' : '開始接單';
         btn.onclick = async () => {
-          await api('/api/admin/store', { method: 'PUT', body: { is_open: !d.store_open } });
+          await api('/api/admin/stores/' + d.store_id, { method: 'PUT', body: { is_open: !d.store_open } });
           toast(d.store_open ? '已暫停接單' : '已開始接單', 'success');
           load();
         };
         document.getElementById('recent').innerHTML = d.recent_orders.length ? d.recent_orders.map((o) => `
-          <tr><td><a href="/admin/orders?open=${o.id}">${esc(o.order_no)}</a></td><td>${esc(o.customer_name)}</td>
+          <tr><td><a href="/admin/orders?open=${o.id}">${esc(o.order_no)}</a>${d.store_id ? '' : `<div class="small muted">${esc(o.store_name)}</div>`}</td><td>${esc(o.customer_name)}</td>
           <td class="num">${money(o.total)}</td><td>${statusBadge(o.status, o.status_label)}</td></tr>`).join('')
           : '<tr><td colspan="4" class="empty">尚無訂單</td></tr>';
         document.getElementById('top').innerHTML = d.top_items.length ? d.top_items.map((i) => `
-          <tr><td>${esc(i.name)}</td><td class="num">${i.quantity}</td><td class="num">${money(i.revenue)}</td></tr>`).join('')
+          <tr><td>${esc(i.name)}${d.store_id ? '' : `<div class="small muted">${esc(i.store_name)}</div>`}</td><td class="num">${i.quantity}</td><td class="num">${money(i.revenue)}</td></tr>`).join('')
           : '<tr><td colspan="3" class="empty">今日尚無銷售</td></tr>';
       }
       await load();

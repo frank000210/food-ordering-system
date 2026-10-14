@@ -70,9 +70,10 @@
           ${statusBadge(o.status, o.status_label)}
         </div>
         <dl class="kv">
+          ${o.store_name ? `<dt>商家</dt><dd>${esc(o.store_name)}</dd>` : ''}
           <dt>訂購人</dt><dd>${esc(o.customer_name)}</dd>
           ${showContact && o.customer_phone ? `<dt>電話</dt><dd>${esc(o.customer_phone)}</dd>` : ''}
-          <dt>用餐方式</dt><dd>${esc(o.order_type_label)}</dd>
+          ${o.order_type_label ? `<dt>用餐方式</dt><dd>${esc(o.order_type_label)}</dd>` : ''}
           ${o.pickup_time ? `<dt>取餐時間</dt><dd>${esc(o.pickup_time)}</dd>` : ''}
           <dt>下單時間</dt><dd>${esc(o.created_at)}</dd>
           ${o.note ? `<dt>備註</dt><dd>${esc(o.note)}</dd>` : ''}

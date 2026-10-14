@@ -2,7 +2,10 @@
   'use strict';
   const { api, money, esc, toast } = window.App;
   const MAX_QTY = 99;
-  const CART_KEY = 'cart_v1';
+  // One cart per store: an order can only contain items from a single store.
+  const storeId = Number(new URLSearchParams(location.search).get('id'));
+  if (!Number.isInteger(storeId) || storeId <= 0) { location.replace('/'); return; }
+  const CART_KEY = `cart_v2_${storeId}`;
 
   let items = new Map();   // id -> menu item
   let cart = new Map();    // id -> qty
@@ -53,7 +56,7 @@
   }
 
   function renderStore(s) {
-    document.title = `${s.store_name}｜線上點餐`;
+    document.title = `${s.store_name}｜線上訂餐`;
     document.querySelectorAll('[data-store-name]').forEach((el) => { el.textContent = s.store_name; });
     $('storeDesc').textContent = s.store_description || '';
     $('storeHours').textContent = s.business_hours ? `營業時間：${s.business_hours}` : '';
@@ -168,10 +171,8 @@
       const order = await api('/api/orders', {
         method: 'POST',
         body: {
+          store_id: storeId,
           customer_name: name,
-          customer_phone: form.customer_phone.value.trim(),
-          order_type: form.order_type.value,
-          pickup_time: form.pickup_time.value.trim(),
           note: form.note.value.trim(),
           items: [...cart].map(([menu_item_id, quantity]) => ({ menu_item_id, quantity })),
         },
@@ -187,7 +188,7 @@
 
   (async function init() {
     try {
-      const data = await api('/api/menu');
+      const data = await api(`/api/stores/${storeId}/menu`);
       storeOpen = data.store.is_open;
       renderStore(data.store);
       if (data.admin_url) $('adminLink').href = data.admin_url;
@@ -196,7 +197,9 @@
       renderMenu(data.categories);
       renderCart();
     } catch (err) {
-      $('menu').innerHTML = `<p class="empty">菜單載入失敗：${esc(err.message)}</p>`;
+      document.querySelectorAll('[data-store-name]').forEach((el) => { el.textContent = '找不到商家'; });
+      $('menu').innerHTML = `<p class="empty">${err.status === 404 ? '找不到這家商家，可能已停止營業。'
+        : '菜單載入失敗：' + esc(err.message)} <a href="/">回商家列表</a></p>`;
     }
   })();
 })();

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>線上點餐</title>
+  <title>線上訂餐｜選擇商家</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;600;700;800&family=Noto+Serif+TC:wght@700&display=swap" rel="stylesheet">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
@@ -12,7 +12,7 @@
 <body>
   <header class="site-header">
     <div class="container bar">
-      <a class="brand" href="/" data-store-name>線上點餐</a>
+      <a class="brand" href="/">線上訂餐</a>
       <nav class="site-nav">
         <a href="/" class="active">點餐</a>
         <a href="/track">訂單查詢</a>
@@ -23,67 +23,41 @@
 
   <section class="hero">
     <div class="container">
-      <h1 data-store-name>載入中…</h1>
-      <p class="muted" id="storeDesc"></p>
-      <div class="hero-meta">
-        <span id="openPill" class="open-pill"></span>
-        <span id="storeHours"></span>
-        <span id="storePhone"></span>
-        <span id="storeAddress"></span>
-      </div>
-      <div id="announcement" class="announcement hidden"></div>
+      <h1>選擇商家</h1>
+      <p class="muted">先選一家商家，再挑選餐點。每張訂單只能包含同一家商家的餐點。</p>
     </div>
   </section>
 
-  <main class="container order-layout">
-    <div>
-      <nav class="cat-tabs" id="catTabs" aria-label="餐點分類"></nav>
-      <div id="menu"><p class="empty">菜單載入中…</p></div>
-    </div>
-
-    <aside class="card cart" id="cart" aria-label="購物車">
-      <h2>您的訂單 <span><button type="button" class="link-btn" id="clearCart">清空</button> <button type="button" class="btn btn-sm sheet-close" id="closeCart" aria-label="收合購物車">收合 ▾</button></span></h2>
-      <ul class="cart-lines" id="cartLines"></ul>
-      <div class="cart-total"><span>總價</span><strong id="cartTotal">NT$ 0</strong></div>
-
-      <form id="orderForm" novalidate>
-        <div class="field">
-          <label for="customerName">顧客名稱 <span class="req">*</span></label>
-          <input type="text" id="customerName" name="customer_name" maxlength="50" autocomplete="name" required>
-        </div>
-        <div class="field">
-          <label for="customerPhone">聯絡電話（查詢訂單用）</label>
-          <input type="tel" id="customerPhone" name="customer_phone" maxlength="20" autocomplete="tel" placeholder="0912-345-678">
-        </div>
-        <div class="row">
-          <div class="field">
-            <label for="orderType">用餐方式</label>
-            <select id="orderType" name="order_type">
-              <option value="takeout">外帶自取</option>
-              <option value="dine_in">內用</option>
-              <option value="delivery">外送</option>
-            </select>
-          </div>
-          <div class="field">
-            <label for="pickupTime">取餐時間</label>
-            <input type="text" id="pickupTime" name="pickup_time" maxlength="30" placeholder="例：12:30">
-          </div>
-        </div>
-        <div class="field">
-          <label for="note">備註</label>
-          <textarea id="note" name="note" maxlength="300" placeholder="例：不要香菜、飯少"></textarea>
-        </div>
-        <button type="submit" class="btn btn-primary btn-block" id="submitBtn">送出訂單</button>
-      </form>
-    </aside>
+  <main class="container">
+    <div class="store-grid" id="stores"><p class="empty">載入中…</p></div>
   </main>
 
-  <div class="cart-bar" id="cartBar">
-    <div><span id="cartBarCount">0</span> 份 · <strong id="cartBarTotal">NT$ 0</strong></div>
-    <button type="button" class="btn btn-primary" id="openCart">查看訂單</button>
-  </div>
-
   <script src="/assets/common.js"></script>
-  <script src="/assets/order.js"></script>
+  <script>
+    (async function () {
+      const { api, esc } = window.App;
+      const box = document.getElementById('stores');
+      try {
+        const { stores, admin_url: adminUrl } = await api('/api/stores');
+        if (adminUrl) document.getElementById('adminLink').href = adminUrl;
+        box.innerHTML = stores.length ? stores.map((s) => `
+          <a class="card store-card ${s.is_open ? '' : 'closed'}" href="/store?id=${s.id}">
+            <div class="store-card-head">
+              <h2>${esc(s.store_name)}</h2>
+              <span class="open-pill ${s.is_open ? 'on' : 'off'}">${s.is_open ? '接單中' : '暫停接單'}</span>
+            </div>
+            ${s.store_description ? `<p class="muted">${esc(s.store_description)}</p>` : ''}
+            <div class="store-card-meta small muted">
+              ${s.business_hours ? `<span>營業時間：${esc(s.business_hours)}</span>` : ''}
+              ${s.store_address ? `<span>地址：${esc(s.store_address)}</span>` : ''}
+            </div>
+            ${s.announcement ? `<div class="announcement">${esc(s.announcement)}</div>` : ''}
+            <span class="store-card-cta">查看菜單 →</span>
+          </a>`).join('') : '<p class="empty">目前沒有營業中的商家</p>';
+      } catch (err) {
+        box.innerHTML = `<p class="empty">商家載入失敗：${esc(err.message)}</p>`;
+      }
+    })();
+  </script>
 </body>
 </html>
