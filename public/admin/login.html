@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>後台登入</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;600;700;800&family=Noto+Serif+TC:wght@700&display=swap" rel="stylesheet">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/style.css">
+  <link rel="stylesheet" href="/admin/admin.css">
+</head>
+<body>
+  <div class="login-wrap">
+    <form class="card login-card" id="loginForm">
+      <h1 style="font-size:22px">後台管理登入</h1>
+      <p class="muted small" style="margin-top:0">請使用店家管理員帳號登入</p>
+      <div class="field">
+        <label for="username">帳號</label>
+        <input type="text" id="username" autocomplete="username" required autofocus>
+      </div>
+      <div class="field">
+        <label for="password">密碼</label>
+        <input type="password" id="password" autocomplete="current-password" required>
+      </div>
+      <button class="btn btn-primary btn-block" type="submit">登入</button>
+      <p class="small" style="text-align:center;margin:14px 0 0"><a href="/">← 回到點餐頁</a></p>
+    </form>
+  </div>
+  <script src="/assets/common.js"></script>
+  <script>
+    document.getElementById('loginForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try {
+        await App.api('/api/admin/login', { method: 'POST', body: {
+          username: document.getElementById('username').value.trim(),
+          password: document.getElementById('password').value,
+        } });
+        const next = new URLSearchParams(location.search).get('next');
+        location.href = next && next.startsWith('/admin') ? next : '/admin/';
+      } catch (err) {
+        App.toast(err.message, 'error');
+      }
+    });
+  </script>
+</body>
+</html>

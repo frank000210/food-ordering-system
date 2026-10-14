@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>線上點餐</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;600;700;800&family=Noto+Serif+TC:wght@700&display=swap" rel="stylesheet">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="container bar">
+      <a class="brand" href="/" data-store-name>線上點餐</a>
+      <nav class="site-nav">
+        <a href="/" class="active">點餐</a>
+        <a href="/track">訂單查詢</a>
+      </nav>
+    </div>
+  </header>
+
+  <section class="hero">
+    <div class="container">
+      <h1 data-store-name>載入中…</h1>
+      <p class="muted" id="storeDesc"></p>
+      <div class="hero-meta">
+        <span id="openPill" class="open-pill"></span>
+        <span id="storeHours"></span>
+        <span id="storePhone"></span>
+        <span id="storeAddress"></span>
+      </div>
+      <div id="announcement" class="announcement hidden"></div>
+    </div>
+  </section>
+
+  <main class="container order-layout">
+    <div>
+      <nav class="cat-tabs" id="catTabs" aria-label="餐點分類"></nav>
+      <div id="menu"><p class="empty">菜單載入中…</p></div>
+    </div>
+
+    <aside class="card cart" id="cart" aria-label="購物車">
+      <h2>您的訂單 <span><button type="button" class="link-btn" id="clearCart">清空</button> <button type="button" class="btn btn-sm sheet-close" id="closeCart" aria-label="收合購物車">收合 ▾</button></span></h2>
+      <ul class="cart-lines" id="cartLines"></ul>
+      <div class="cart-total"><span>總價</span><strong id="cartTotal">NT$ 0</strong></div>
+
+      <form id="orderForm" novalidate>
+        <div class="field">
+          <label for="customerName">顧客名稱 <span class="req">*</span></label>
+          <input type="text" id="customerName" name="customer_name" maxlength="50" autocomplete="name" required>
+        </div>
+        <div class="field">
+          <label for="customerPhone">聯絡電話（查詢訂單用）</label>
+          <input type="tel" id="customerPhone" name="customer_phone" maxlength="20" autocomplete="tel" placeholder="0912-345-678">
+        </div>
+        <div class="row">
+          <div class="field">
+            <label for="orderType">用餐方式</label>
+            <select id="orderType" name="order_type">
+              <option value="takeout">外帶自取</option>
+              <option value="dine_in">內用</option>
+              <option value="delivery">外送</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="pickupTime">取餐時間</label>
+            <input type="text" id="pickupTime" name="pickup_time" maxlength="30" placeholder="例：12:30">
+          </div>
+        </div>
+        <div class="field">
+          <label for="note">備註</label>
+          <textarea id="note" name="note" maxlength="300" placeholder="例：不要香菜、飯少"></textarea>
+        </div>
+        <button type="submit" class="btn btn-primary btn-block" id="submitBtn">送出訂單</button>
+      </form>
+    </aside>
+  </main>
+
+  <div class="cart-bar" id="cartBar">
+    <div><span id="cartBarCount">0</span> 份 · <strong id="cartBarTotal">NT$ 0</strong></div>
+    <button type="button" class="btn btn-primary" id="openCart">查看訂單</button>
+  </div>
+
+  <script src="/assets/common.js"></script>
+  <script src="/assets/order.js"></script>
+</body>
+</html>

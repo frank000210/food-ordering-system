@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>餐點設定</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;600;700;800&family=Noto+Serif+TC:wght@700&display=swap" rel="stylesheet">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/style.css">
+  <link rel="stylesheet" href="/admin/admin.css">
+</head>
+<body data-page="menu">
+  <div class="admin-shell">
+    <main class="admin-main">
+      <div class="page-head">
+        <div><button class="btn btn-sm menu-toggle" type="button">☰ 選單</button><h1>餐點設定</h1></div>
+        <div class="toolbar">
+          <button class="btn" type="button" id="addCat">＋ 新增分類</button>
+          <button class="btn btn-primary" type="button" id="addItem">＋ 新增餐點</button>
+        </div>
+      </div>
+
+      <section class="card" style="margin-bottom:18px">
+        <h2>餐點列表</h2>
+        <div class="table-wrap"><table class="table">
+          <thead><tr><th>排序</th><th>餐點名稱</th><th>分類</th><th class="num">價格</th><th>供應中</th><th></th></tr></thead>
+          <tbody id="items"><tr><td colspan="6" class="empty">載入中…</td></tr></tbody>
+        </table></div>
+      </section>
+
+      <section class="card">
+        <h2>分類</h2>
+        <div class="table-wrap"><table class="table">
+          <thead><tr><th>排序</th><th>分類名稱</th><th class="num">餐點數</th><th>顯示</th><th></th></tr></thead>
+          <tbody id="cats"></tbody>
+        </table></div>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="itemDlg">
+    <form method="dialog" id="itemForm">
+      <div class="dialog-head"><h2 id="itemTitle">餐點</h2><button class="close-x" type="button" data-close aria-label="關閉">×</button></div>
+      <div class="dialog-body">
+        <input type="hidden" name="id">
+        <div class="field"><label>餐點名稱 <span class="req">*</span></label><input type="text" name="name" maxlength="60" required></div>
+        <div class="row">
+          <div class="field"><label>價格（NT$） <span class="req">*</span></label><input type="number" name="price" min="0" max="100000" step="1" required></div>
+          <div class="field"><label>分類</label><select name="category_id"></select></div>
+        </div>
+        <div class="field"><label>說明</label><textarea name="description" maxlength="300"></textarea></div>
+        <div class="field"><label>圖片網址（選填）</label><input type="url" name="image_url" maxlength="500" placeholder="https://…"></div>
+        <div class="row">
+          <div class="field"><label>排序（數字小的在前）</label><input type="number" name="sort_order" step="1" value="0"></div>
+          <div class="field"><label>&nbsp;</label><label class="switch"><input type="checkbox" name="available" checked> 供應中</label></div>
+        </div>
+      </div>
+      <div class="dialog-foot">
+        <button class="btn" type="button" data-close>取消</button>
+        <button class="btn btn-primary" type="submit">儲存</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="catDlg">
+    <form method="dialog" id="catForm">
+      <div class="dialog-head"><h2 id="catTitle">分類</h2><button class="close-x" type="button" data-close aria-label="關閉">×</button></div>
+      <div class="dialog-body">
+        <input type="hidden" name="id">
+        <div class="field"><label>分類名稱 <span class="req">*</span></label><input type="text" name="name" maxlength="40" required></div>
+        <div class="row">
+          <div class="field"><label>排序</label><input type="number" name="sort_order" step="1" value="0"></div>
+          <div class="field"><label>&nbsp;</label><label class="switch"><input type="checkbox" name="active" checked> 在前台顯示</label></div>
+        </div>
+      </div>
+      <div class="dialog-foot">
+        <button class="btn" type="button" data-close>取消</button>
+        <button class="btn btn-primary" type="submit">儲存</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="/assets/common.js"></script>
+  <script src="/admin/admin.js"></script>
+  <script>
+    (async function () {
+      const { api, money, esc, toast } = App;
+      if (!(await Admin.boot())) return;
+      let cats = [];
+      let items = [];
+
+      document.querySelectorAll('dialog [data-close]').forEach((b) =>
+        b.addEventListener('click', () => b.closest('dialog').close()));
+
+      async function load() {
+        [cats, items] = await Promise.all([api('/api/admin/categories'), api('/api/admin/items')]);
+        document.getElementById('items').innerHTML = items.length ? items.map((m) => `
+          <tr>
+            <td class="small muted">${m.sort_order}</td>
+            <td><strong>${esc(m.name)}</strong><div class="small muted">${esc(m.description)}</div></td>
+            <td>${esc(m.category_name || '（未分類）')}</td>
+            <td class="num">${money(m.price)}</td>
+            <td><label class="switch"><input type="checkbox" data-avail="${m.id}" ${m.available ? 'checked' : ''}>
+              <span class="small">${m.available ? '供應中' : '已停售'}</span></label></td>
+            <td style="white-space:nowrap"><button class="btn btn-sm" data-edit-item="${m.id}">編輯</button>
+              <button class="btn btn-sm btn-danger" data-del-item="${m.id}">刪除</button></td>
+          </tr>`).join('') : '<tr><td colspan="6" class="empty">尚未建立餐點</td></tr>';
+        document.getElementById('cats').innerHTML = cats.length ? cats.map((c) => `
+          <tr>
+            <td class="small muted">${c.sort_order}</td>
+            <td><strong>${esc(c.name)}</strong></td>
+            <td class="num">${c.item_count}</td>
+            <td>${c.active ? '<span class="badge st-ready">顯示</span>' : '<span class="badge">隱藏</span>'}</td>
+            <td style="white-space:nowrap"><button class="btn btn-sm" data-edit-cat="${c.id}">編輯</button>
+              <button class="btn btn-sm btn-danger" data-del-cat="${c.id}">刪除</button></td>
+          </tr>`).join('') : '<tr><td colspan="5" class="empty">尚未建立分類</td></tr>';
+      }
+
+      // ----- Items -----
+      const itemDlg = document.getElementById('itemDlg');
+      const itemForm = document.getElementById('itemForm');
+      function openItem(m) {
+        itemForm.reset();
+        document.getElementById('itemTitle').textContent = m ? '編輯餐點' : '新增餐點';
+        itemForm.category_id.innerHTML = '<option value="">（未分類）</option>' +
+          cats.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+        itemForm.id.value = m ? m.id : '';
+        itemForm.name.value = m ? m.name : '';
+        itemForm.price.value = m ? m.price : '';
+        itemForm.category_id.value = m ? (m.category_id ?? '') : (cats[0] ? cats[0].id : '');
+        itemForm.description.value = m ? m.description : '';
+        itemForm.image_url.value = m ? m.image_url : '';
+        itemForm.sort_order.value = m ? m.sort_order : 0;
+        itemForm.available.checked = m ? !!m.available : true;
+        itemDlg.showModal();
+        itemForm.name.focus();
+      }
+      itemForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const id = itemForm.id.value;
+        const body = {
+          name: itemForm.name.value, price: Number(itemForm.price.value),
+          category_id: itemForm.category_id.value, description: itemForm.description.value,
+          image_url: itemForm.image_url.value, sort_order: Number(itemForm.sort_order.value || 0),
+          available: itemForm.available.checked,
+        };
+        try {
+          await api(id ? `/api/admin/items/${id}` : '/api/admin/items', { method: id ? 'PUT' : 'POST', body });
+          itemDlg.close();
+          toast('餐點已儲存', 'success');
+          load();
+        } catch (err) { toast(err.message, 'error'); }
+      });
+      document.getElementById('addItem').addEventListener('click', () => openItem(null));
+
+      // ----- Categories -----
+      const catDlg = document.getElementById('catDlg');
+      const catForm = document.getElementById('catForm');
+      function openCat(c) {
+        catForm.reset();
+        document.getElementById('catTitle').textContent = c ? '編輯分類' : '新增分類';
+        catForm.id.value = c ? c.id : '';
+        catForm.name.value = c ? c.name : '';
+        catForm.sort_order.value = c ? c.sort_order : (cats.length + 1);
+        catForm.active.checked = c ? !!c.active : true;
+        catDlg.showModal();
+        catForm.name.focus();
+      }
+      catForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const id = catForm.id.value;
+        const body = { name: catForm.name.value, sort_order: Number(catForm.sort_order.value || 0), active: catForm.active.checked };
+        try {
+          await api(id ? `/api/admin/categories/${id}` : '/api/admin/categories', { method: id ? 'PUT' : 'POST', body });
+          catDlg.close();
+          toast('分類已儲存', 'success');
+          load();
+        } catch (err) { toast(err.message, 'error'); }
+      });
+      document.getElementById('addCat').addEventListener('click', () => openCat(null));
+
+      document.addEventListener('click', async (e) => {
+        const t = e.target;
+        try {
+          if (t.dataset.editItem) openItem(items.find((m) => m.id == t.dataset.editItem));
+          if (t.dataset.editCat) openCat(cats.find((c) => c.id == t.dataset.editCat));
+          if (t.dataset.delItem) {
+            const m = items.find((x) => x.id == t.dataset.delItem);
+            if (!confirm(`確定刪除「${m.name}」？\n（既有訂單的明細不受影響）`)) return;
+            await api('/api/admin/items/' + m.id, { method: 'DELETE' });
+            toast('已刪除', 'success'); load();
+          }
+          if (t.dataset.delCat) {
+            const c = cats.find((x) => x.id == t.dataset.delCat);
+            if (!confirm(`確定刪除分類「${c.name}」？\n此分類下的餐點會變成「未分類」。`)) return;
+            await api('/api/admin/categories/' + c.id, { method: 'DELETE' });
+            toast('已刪除', 'success'); load();
+          }
+        } catch (err) { toast(err.message, 'error'); }
+      });
+      document.addEventListener('change', async (e) => {
+        const id = e.target.dataset.avail;
+        if (!id) return;
+        try {
+          await api(`/api/admin/items/${id}/availability`, { method: 'PATCH', body: { available: e.target.checked } });
+          toast(e.target.checked ? '已恢復供應' : '已設為停售', 'success');
+          load();
+        } catch (err) { toast(err.message, 'error'); }
+      });
+
+      await load();
+    })();
+  </script>
+</body>
+</html>

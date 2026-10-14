@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>銷售日報</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;600;700;800&family=Noto+Serif+TC:wght@700&display=swap" rel="stylesheet">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/style.css">
+  <link rel="stylesheet" href="/admin/admin.css">
+</head>
+<body data-page="report">
+  <div class="admin-shell">
+    <main class="admin-main">
+      <div class="page-head">
+        <div><button class="btn btn-sm menu-toggle" type="button">☰ 選單</button>
+          <h1>銷售日報 <span class="muted small" id="title"></span></h1></div>
+        <div class="toolbar">
+          <button class="btn btn-sm" type="button" id="prev" aria-label="前一天">‹</button>
+          <input type="date" id="date" aria-label="日期">
+          <button class="btn btn-sm" type="button" id="next" aria-label="後一天">›</button>
+          <a class="btn btn-sm" id="csv" href="#">匯出 CSV</a>
+          <button class="btn btn-sm" type="button" onclick="window.print()">列印</button>
+        </div>
+      </div>
+
+      <div class="stats">
+        <div class="stat"><div class="label">總營收</div><div class="value accent" id="sRevenue">–</div></div>
+        <div class="stat"><div class="label">訂單數</div><div class="value" id="sOrders">–</div></div>
+        <div class="stat"><div class="label">餐點銷售總數</div><div class="value" id="sQty">–</div></div>
+        <div class="stat"><div class="label">平均客單價</div><div class="value" id="sAvg">–</div></div>
+      </div>
+
+      <section class="card" style="margin-bottom:18px">
+        <h2>各餐點銷售</h2>
+        <div class="table-wrap"><table class="table">
+          <thead><tr><th>#</th><th>餐點名稱</th><th class="num">單價</th><th class="num">銷售數</th><th class="num">營收</th><th>營收占比</th></tr></thead>
+          <tbody id="items"></tbody>
+          <tfoot><tr><td></td><td>合計</td><td></td><td class="num" id="fQty"></td><td class="num" id="fRev"></td><td></td></tr></tfoot>
+        </table></div>
+        <p class="muted small" style="margin:12px 0 0" id="note"></p>
+      </section>
+
+      <div class="grid-2">
+        <section class="card">
+          <h2>時段分布</h2>
+          <div class="table-wrap"><table class="table">
+            <thead><tr><th>時段</th><th class="num">訂單</th><th class="num">營收</th></tr></thead>
+            <tbody id="hourly"></tbody>
+          </table></div>
+        </section>
+        <section class="card">
+          <h2>訂單狀態</h2>
+          <div class="table-wrap"><table class="table">
+            <thead><tr><th>狀態</th><th class="num">筆數</th></tr></thead>
+            <tbody id="status"></tbody>
+          </table></div>
+        </section>
+      </div>
+    </main>
+  </div>
+  <script src="/assets/common.js"></script>
+  <script src="/admin/admin.js"></script>
+  <script>
+    (async function () {
+      const { api, money, esc, statusBadge, toast } = App;
+      if (!(await Admin.boot())) return;
+      const dateInput = document.getElementById('date');
+      const params = new URLSearchParams(location.search);
+      dateInput.value = params.get('date') || (await api('/api/meta')).today;
+
+      function shift(days) {
+        const d = new Date(dateInput.value + 'T00:00:00Z');
+        d.setUTCDate(d.getUTCDate() + days);
+        dateInput.value = d.toISOString().slice(0, 10);
+        load();
+      }
+
+      async function load() {
+        const date = dateInput.value;
+        history.replaceState(null, '', '?date=' + date);
+        document.getElementById('csv').href = '/api/admin/reports/daily.csv?date=' + date;
+        try {
+          const r = await api('/api/admin/reports/daily?date=' + date);
+          document.getElementById('title').textContent = r.date;
+          document.getElementById('sRevenue').textContent = money(r.total_revenue);
+          document.getElementById('sOrders').textContent = r.order_count;
+          document.getElementById('sQty').textContent = r.total_quantity;
+          document.getElementById('sAvg').textContent = money(r.average_order_value);
+          const max = Math.max(1, ...r.items.map((i) => i.revenue));
+          document.getElementById('items').innerHTML = r.items.length ? r.items.map((i, idx) => `
+            <tr><td class="muted">${idx + 1}</td><td><strong>${esc(i.name)}</strong></td>
+              <td class="num">${money(i.unit_price)}</td><td class="num">${i.quantity}</td>
+              <td class="num">${money(i.revenue)}</td>
+              <td><div class="bar-cell"><div class="bar-track"><div class="bar-fill" style="width:${(i.revenue / max * 100).toFixed(1)}%"></div></div>
+                <span class="small num">${r.total_revenue ? (i.revenue / r.total_revenue * 100).toFixed(1) : 0}%</span></div></td></tr>`).join('')
+            : '<tr><td colspan="6" class="empty">當日沒有銷售紀錄</td></tr>';
+          document.getElementById('fQty').textContent = r.total_quantity;
+          document.getElementById('fRev').textContent = money(r.total_revenue);
+          document.getElementById('note').textContent = r.cancelled_count
+            ? `※ 已排除取消訂單 ${r.cancelled_count} 筆（${money(r.cancelled_amount)}）。同一餐點若當日調整過價格，會依價格分列。`
+            : '※ 統計不含已取消訂單。同一餐點若當日調整過價格，會依價格分列。';
+          document.getElementById('hourly').innerHTML = r.hourly.length ? r.hourly.map((h) => `
+            <tr><td>${h.hour}:00–${h.hour}:59</td><td class="num">${h.orders}</td><td class="num">${money(h.revenue)}</td></tr>`).join('')
+            : '<tr><td colspan="3" class="empty">—</td></tr>';
+          document.getElementById('status').innerHTML = r.by_status.length ? r.by_status.map((s) => `
+            <tr><td>${statusBadge(s.status, s.label)}</td><td class="num">${s.n}</td></tr>`).join('')
+            : '<tr><td colspan="2" class="empty">—</td></tr>';
+        } catch (err) { toast(err.message, 'error'); }
+      }
+
+      dateInput.addEventListener('change', load);
+      document.getElementById('prev').addEventListener('click', () => shift(-1));
+      document.getElementById('next').addEventListener('click', () => shift(1));
+      load();
+    })();
+  </script>
+</body>
+</html>

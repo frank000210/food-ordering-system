@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>商家設定</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;600;700;800&family=Noto+Serif+TC:wght@700&display=swap" rel="stylesheet">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/style.css">
+  <link rel="stylesheet" href="/admin/admin.css">
+</head>
+<body data-page="store">
+  <div class="admin-shell">
+    <main class="admin-main">
+      <div class="page-head">
+        <div><button class="btn btn-sm menu-toggle" type="button">☰ 選單</button><h1>商家設定</h1></div>
+      </div>
+
+      <div class="grid-2">
+        <form class="card" id="storeForm">
+          <h2>商家基本資訊</h2>
+          <div class="field"><label>商家名稱 <span class="req">*</span></label><input type="text" name="store_name" maxlength="120" required></div>
+          <div class="row">
+            <div class="field"><label>電話</label><input type="tel" name="store_phone" maxlength="120"></div>
+            <div class="field"><label>營業時間</label><input type="text" name="business_hours" maxlength="120"></div>
+          </div>
+          <div class="field"><label>地址</label><input type="text" name="store_address" maxlength="120"></div>
+          <div class="field"><label>商家介紹</label><textarea name="store_description" maxlength="500"></textarea></div>
+          <div class="field"><label>前台公告（留白則不顯示）</label><textarea name="announcement" maxlength="500" placeholder="例：今日排骨售完、颱風天提早打烊"></textarea></div>
+          <div class="field"><label class="switch"><input type="checkbox" name="is_open"> 開放線上接單</label></div>
+          <button class="btn btn-primary" type="submit">儲存設定</button>
+        </form>
+
+        <form class="card" id="pwForm" style="align-self:start">
+          <h2>變更管理員密碼</h2>
+          <div class="field"><label>目前密碼</label><input type="password" name="current_password" autocomplete="current-password" required></div>
+          <div class="field"><label>新密碼（至少 8 個字元）</label><input type="password" name="new_password" minlength="8" autocomplete="new-password" required></div>
+          <div class="field"><label>確認新密碼</label><input type="password" name="confirm" minlength="8" autocomplete="new-password" required></div>
+          <button class="btn btn-primary" type="submit">更新密碼</button>
+        </form>
+      </div>
+    </main>
+  </div>
+  <script src="/assets/common.js"></script>
+  <script src="/admin/admin.js"></script>
+  <script>
+    (async function () {
+      const { api, toast } = App;
+      if (!(await Admin.boot())) return;
+      const form = document.getElementById('storeForm');
+      const FIELDS = ['store_name', 'store_phone', 'business_hours', 'store_address', 'store_description', 'announcement'];
+      const s = await api('/api/admin/store');
+      FIELDS.forEach((k) => { form[k].value = s[k] || ''; });
+      form.is_open.checked = s.is_open;
+
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const body = Object.fromEntries(FIELDS.map((k) => [k, form[k].value]));
+        body.is_open = form.is_open.checked;
+        try {
+          await api('/api/admin/store', { method: 'PUT', body });
+          toast('商家設定已儲存', 'success');
+        } catch (err) { toast(err.message, 'error'); }
+      });
+
+      const pw = document.getElementById('pwForm');
+      pw.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        if (pw.new_password.value !== pw.confirm.value) { toast('兩次輸入的新密碼不一致', 'error'); return; }
+        try {
+          await api('/api/admin/password', { method: 'POST', body: {
+            current_password: pw.current_password.value, new_password: pw.new_password.value } });
+          pw.reset();
+          toast('密碼已更新', 'success');
+        } catch (err) { toast(err.message, 'error'); }
+      });
+    })();
+  </script>
+</body>
+</html>

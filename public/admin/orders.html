@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>訂單管理</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;600;700;800&family=Noto+Serif+TC:wght@700&display=swap" rel="stylesheet">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/style.css">
+  <link rel="stylesheet" href="/admin/admin.css">
+</head>
+<body data-page="orders">
+  <div class="admin-shell">
+    <main class="admin-main">
+      <div class="page-head">
+        <div><button class="btn btn-sm menu-toggle" type="button">☰ 選單</button><h1>訂單管理</h1></div>
+        <form class="toolbar" id="filters">
+          <input type="date" id="fDate" aria-label="日期">
+          <select id="fStatus" aria-label="狀態"><option value="">全部狀態</option></select>
+          <input type="search" id="fQ" placeholder="編號 / 姓名 / 電話" aria-label="關鍵字">
+          <button class="btn btn-sm btn-primary" type="submit">查詢</button>
+          <button class="btn btn-sm" type="button" id="fAll">清除條件</button>
+        </form>
+      </div>
+
+      <section class="card">
+        <div class="table-wrap"><table class="table">
+          <thead><tr><th>訂單編號</th><th>下單時間</th><th>顧客</th><th>電話</th><th>方式</th>
+            <th class="num">份數</th><th class="num">金額</th><th>狀態</th><th></th></tr></thead>
+          <tbody id="rows"><tr><td colspan="9" class="empty">載入中…</td></tr></tbody>
+          <tfoot><tr><td colspan="6" id="sumLabel"></td><td class="num" id="sumTotal"></td><td colspan="2"></td></tr></tfoot>
+        </table></div>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="dlg">
+    <div class="dialog-head"><h2>訂單明細</h2><button class="close-x" type="button" data-close aria-label="關閉">×</button></div>
+    <div class="dialog-body">
+      <div id="dlgBody"></div>
+      <div class="status-actions" id="dlgActions"></div>
+    </div>
+    <div class="dialog-foot"><button class="btn" type="button" data-close>關閉</button></div>
+  </dialog>
+
+  <script src="/assets/common.js"></script>
+  <script src="/admin/admin.js"></script>
+  <script>
+    (async function () {
+      const { api, money, esc, statusBadge, renderOrder, toast } = App;
+      if (!(await Admin.boot())) return;
+      const meta = await api('/api/meta');
+      const fStatus = document.getElementById('fStatus');
+      for (const [k, v] of Object.entries(meta.statuses)) fStatus.insertAdjacentHTML('beforeend', `<option value="${k}">${v}</option>`);
+      document.getElementById('fDate').value = meta.today;
+
+      // Typical flow for each status; cancel is always available until completed.
+      const NEXT = {
+        pending: ['confirmed', 'cancelled'], confirmed: ['preparing', 'cancelled'],
+        preparing: ['ready', 'cancelled'], ready: ['completed', 'cancelled'],
+        completed: [], cancelled: ['pending'],
+      };
+
+      async function load() {
+        const q = new URLSearchParams({
+          date: document.getElementById('fDate').value,
+          status: fStatus.value,
+          q: document.getElementById('fQ').value.trim(),
+        });
+        const list = await api('/api/admin/orders?' + q);
+        document.getElementById('rows').innerHTML = list.length ? list.map((o) => `
+          <tr>
+            <td><strong>${esc(o.order_no)}</strong></td>
+            <td class="small">${esc(o.created_at.slice(5, 16))}</td>
+            <td>${esc(o.customer_name)}</td>
+            <td class="small">${esc(o.customer_phone)}</td>
+            <td class="small">${esc(o.order_type_label)}</td>
+            <td class="num">${o.item_count}</td>
+            <td class="num">${money(o.total)}</td>
+            <td>${statusBadge(o.status, o.status_label)}</td>
+            <td><button class="btn btn-sm" data-open="${o.id}">明細</button></td>
+          </tr>`).join('') : '<tr><td colspan="9" class="empty">沒有符合條件的訂單</td></tr>';
+        const valid = list.filter((o) => o.status !== 'cancelled');
+        document.getElementById('sumLabel').textContent = `共 ${list.length} 筆（不含取消：${valid.length} 筆）`;
+        document.getElementById('sumTotal').textContent = money(valid.reduce((s, o) => s + o.total, 0));
+      }
+
+      const dlg = document.getElementById('dlg');
+      dlg.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', () => dlg.close()));
+
+      async function openOrder(id) {
+        const o = await api('/api/admin/orders/' + id);
+        document.getElementById('dlgBody').innerHTML = renderOrder(o);
+        document.getElementById('dlgActions').innerHTML = (NEXT[o.status] || []).map((s) =>
+          `<button class="btn ${s === 'cancelled' ? 'btn-danger' : 'btn-primary'}" data-status="${s}">改為「${meta.statuses[s]}」</button>`).join('');
+        document.getElementById('dlgActions').onclick = async (e) => {
+          const b = e.target.closest('[data-status]');
+          if (!b) return;
+          if (b.dataset.status === 'cancelled' && !confirm('確定要取消這筆訂單嗎？')) return;
+          try {
+            await api(`/api/admin/orders/${id}/status`, { method: 'PATCH', body: { status: b.dataset.status } });
+            toast('訂單狀態已更新', 'success');
+            await openOrder(id);
+            load();
+            Admin.refreshPendingCount();
+          } catch (err) { toast(err.message, 'error'); }
+        };
+        if (!dlg.open) dlg.showModal();
+      }
+
+      document.getElementById('rows').addEventListener('click', (e) => {
+        const b = e.target.closest('[data-open]');
+        if (b) openOrder(b.dataset.open).catch((err) => toast(err.message, 'error'));
+      });
+      document.getElementById('filters').addEventListener('submit', (e) => { e.preventDefault(); load().catch((err) => toast(err.message, 'error')); });
+      document.getElementById('fAll').addEventListener('click', () => {
+        document.getElementById('fDate').value = '';
+        fStatus.value = '';
+        document.getElementById('fQ').value = '';
+        load();
+      });
+
+      const openId = new URLSearchParams(location.search).get('open');
+      if (openId) document.getElementById('fDate').value = '';
+      await load();
+      if (openId) openOrder(openId).catch((err) => toast(err.message, 'error'));
+      setInterval(() => { if (!dlg.open) load().catch(() => {}); }, 30000);
+    })();
+  </script>
+</body>
+</html>

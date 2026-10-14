@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>訂單成立</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;600;700;800&family=Noto+Serif+TC:wght@700&display=swap" rel="stylesheet">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="container bar">
+      <a class="brand" href="/" data-store-name>線上點餐</a>
+      <nav class="site-nav">
+        <a href="/">點餐</a>
+        <a href="/track">訂單查詢</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container narrow">
+    <div class="success-head" id="head">
+      <div class="success-icon" aria-hidden="true">✓</div>
+      <h1>訂單已成立</h1>
+      <p class="muted">感謝您的訂購，請記下訂單編號以便查詢訂單狀態。</p>
+    </div>
+    <div class="card" id="orderBox"><p class="empty">載入中…</p></div>
+    <div class="no-print" style="display:flex;gap:10px;justify-content:center;margin:20px 0 40px;flex-wrap:wrap">
+      <a class="btn" href="/">繼續點餐</a>
+      <a class="btn" id="trackLink" href="/track">查詢訂單狀態</a>
+      <button class="btn" type="button" onclick="window.print()">列印訂單</button>
+    </div>
+  </main>
+
+  <script src="/assets/common.js"></script>
+  <script>
+    (async function () {
+      const { api, renderOrder, esc } = window.App;
+      const no = new URLSearchParams(location.search).get('no') || '';
+      const box = document.getElementById('orderBox');
+      document.getElementById('trackLink').href = '/track?no=' + encodeURIComponent(no);
+      try {
+        const store = await api('/api/store');
+        document.querySelectorAll('[data-store-name]').forEach((el) => { el.textContent = store.store_name; });
+      } catch { /* ignore */ }
+      let order = null;
+      try { order = JSON.parse(sessionStorage.getItem('last_order') || 'null'); } catch { /* ignore */ }
+      if (order && order.order_no === no) {
+        box.innerHTML = renderOrder(order);
+      } else {
+        document.getElementById('head').classList.add('hidden');
+        box.innerHTML = `<p class="empty">找不到訂單 ${esc(no)} 的資料，請至
+          <a href="/track?no=${encodeURIComponent(no)}">訂單查詢</a> 輸入訂購人資訊查詢。</p>`;
+      }
+    })();
+  </script>
+</body>
+</html>
