@@ -31,16 +31,16 @@
       ${NAV.map(([key, href, label]) => `<a class="nav ${key === page ? 'active' : ''}" href="${href}">
         <span>${label}</span>${key === 'orders' ? '<span class="count hidden" id="pendingCount"></span>' : ''}</a>`).join('')}
       <div class="spacer"></div>
-      <a class="nav" href="/" target="_blank" rel="noopener">前台點餐頁 ↗</a>
-      <div class="who">登入身分：${esc(me.username)}</div>
-      <a class="nav" href="#" id="logoutBtn">登出</a>`;
+      <a class="nav" href="${esc(me.storefront_url || '/')}" target="_blank" rel="noopener">前台點餐頁 ↗</a>
+      <div class="who">${me.auth_disabled ? '測試模式：後台未啟用登入' : '登入身分：' + esc(me.username)}</div>
+      ${me.auth_disabled ? '' : '<a class="nav" href="#" id="logoutBtn">登出</a>'}`;
     const shell = document.querySelector('.admin-shell');
     shell.prepend(sidebar);
 
     const toggle = document.querySelector('.menu-toggle');
     if (toggle) toggle.addEventListener('click', () => sidebar.classList.toggle('open'));
 
-    document.getElementById('logoutBtn').addEventListener('click', async (e) => {
+    document.getElementById('logoutBtn')?.addEventListener('click', async (e) => {
       e.preventDefault();
       await api('/api/admin/logout', { method: 'POST', body: {} }).catch(() => {});
       location.href = '/admin/login';

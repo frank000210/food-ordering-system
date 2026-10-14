@@ -1,16 +1,32 @@
 {
   "name": "food-ordering-system",
-  "version": "1.0.0",
-  "description": "線上訂餐系統：前台點餐、訂單查詢，後台店家設定、餐點管理、訂單管理與銷售日報",
+  "version": "2.0.0",
+  "description": "線上訂餐系統（MongoDB）：前台點餐、訂單查詢，後台店家設定、餐點管理、訂單管理與銷售日報",
   "main": "src/server.js",
   "scripts": {
-    "start": "node --no-warnings src/server.js",
-    "dev": "node --no-warnings --watch src/server.js",
-    "test": "node --no-warnings --test test/*.test.js"
+    "start": "node src/server.js",
+    "dev": "node --watch --env-file-if-exists=.env src/server.js",
+    "test": "node --test --test-concurrency=1 test/*.test.js"
   },
   "engines": {
-    "node": ">=22.13.0"
+    "node": ">=22"
   },
-  "keywords": ["ordering", "restaurant", "nodejs", "sqlite"],
-  "license": "MIT"
+  "keywords": [
+    "ordering",
+    "restaurant",
+    "nodejs",
+    "mongodb"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "mongodb": "^6.21.0"
+  },
+  "devDependencies": {
+    "mongodb-memory-server": "^10.4.3"
+  },
+  "config": {
+    "mongodbMemoryServer": {
+      "disablePostinstall": "1"
+    }
+  }
 }

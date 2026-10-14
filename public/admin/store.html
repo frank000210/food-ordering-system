@@ -32,13 +32,11 @@
           <button class="btn btn-primary" type="submit">儲存設定</button>
         </form>
 
-        <form class="card" id="pwForm" style="align-self:start">
-          <h2>變更管理員密碼</h2>
-          <div class="field"><label>目前密碼</label><input type="password" name="current_password" autocomplete="current-password" required></div>
-          <div class="field"><label>新密碼（至少 8 個字元）</label><input type="password" name="new_password" minlength="8" autocomplete="new-password" required></div>
-          <div class="field"><label>確認新密碼</label><input type="password" name="confirm" minlength="8" autocomplete="new-password" required></div>
-          <button class="btn btn-primary" type="submit">更新密碼</button>
-        </form>
+        <div class="card" style="align-self:start">
+          <h2>管理員帳密</h2>
+          <p class="muted">後台帳號與密碼由伺服器環境變數 <code>ADMIN</code>、<code>ADMIN_PASSWORD</code> 設定。
+            如需變更，請到部署平台（Zeabur）修改環境變數後重新啟動服務，所有已登入的工作階段需重新登入。</p>
+        </div>
       </div>
     </main>
   </div>
@@ -61,18 +59,6 @@
         try {
           await api('/api/admin/store', { method: 'PUT', body });
           toast('商家設定已儲存', 'success');
-        } catch (err) { toast(err.message, 'error'); }
-      });
-
-      const pw = document.getElementById('pwForm');
-      pw.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        if (pw.new_password.value !== pw.confirm.value) { toast('兩次輸入的新密碼不一致', 'error'); return; }
-        try {
-          await api('/api/admin/password', { method: 'POST', body: {
-            current_password: pw.current_password.value, new_password: pw.new_password.value } });
-          pw.reset();
-          toast('密碼已更新', 'success');
         } catch (err) { toast(err.message, 'error'); }
       });
     })();

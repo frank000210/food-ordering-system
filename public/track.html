@@ -47,12 +47,18 @@
         <button class="btn btn-primary" type="submit">查詢</button>
       </form>
       <form id="formPhone" class="hidden">
-        <div class="field">
-          <label for="phone">下單時填寫的電話</label>
-          <input type="tel" id="phone" placeholder="0912-345-678" required>
+        <div class="row">
+          <div class="field">
+            <label for="phone">下單時填寫的電話</label>
+            <input type="tel" id="phone" placeholder="0912-345-678" required>
+          </div>
+          <div class="field">
+            <label for="phoneName">訂購人姓名</label>
+            <input type="text" id="phoneName" required>
+          </div>
         </div>
         <button class="btn btn-primary" type="submit">查詢</button>
-        <p class="muted small" style="margin:10px 0 0">會列出此電話最近 20 筆訂單。</p>
+        <p class="muted small" style="margin:10px 0 0">會列出此電話與姓名最近 20 筆訂單。</p>
       </form>
     </div>
     <div class="results" id="results"></div>
@@ -97,7 +103,8 @@
       });
       document.getElementById('formPhone').addEventListener('submit', (e) => {
         e.preventDefault();
-        search({ phone: document.getElementById('phone').value.trim() });
+        search({ phone: document.getElementById('phone').value.trim(),
+          name: document.getElementById('phoneName').value.trim() });
       });
     })();
   </script>

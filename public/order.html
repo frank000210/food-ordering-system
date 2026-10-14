@@ -24,7 +24,7 @@
     <div class="success-head" id="head">
       <div class="success-icon" aria-hidden="true">✓</div>
       <h1>訂單已成立</h1>
-      <p class="muted">感謝您的訂購，請記下訂單編號以便查詢訂單狀態。</p>
+      <p class="muted">感謝您的訂購，請記下訂單編號，或將本頁加入書籤以便隨時查看訂單狀態。</p>
     </div>
     <div class="card" id="orderBox"><p class="empty">載入中…</p></div>
     <div class="no-print" style="display:flex;gap:10px;justify-content:center;margin:20px 0 40px;flex-wrap:wrap">
@@ -38,7 +38,9 @@
   <script>
     (async function () {
       const { api, renderOrder, esc } = window.App;
-      const no = new URLSearchParams(location.search).get('no') || '';
+      const params = new URLSearchParams(location.search);
+      const no = params.get('no') || '';
+      const token = params.get('t') || '';
       const box = document.getElementById('orderBox');
       document.getElementById('trackLink').href = '/track?no=' + encodeURIComponent(no);
       try {
@@ -46,7 +48,12 @@
         document.querySelectorAll('[data-store-name]').forEach((el) => { el.textContent = store.store_name; });
       } catch { /* ignore */ }
       let order = null;
-      try { order = JSON.parse(sessionStorage.getItem('last_order') || 'null'); } catch { /* ignore */ }
+      if (token) {
+        try { order = await api('/api/orders/view?' + new URLSearchParams({ no, t: token })); } catch { /* fall through */ }
+      }
+      if (!order) {
+        try { order = JSON.parse(sessionStorage.getItem('last_order') || 'null'); } catch { /* ignore */ }
+      }
       if (order && order.order_no === no) {
         box.innerHTML = renderOrder(order);
       } else {

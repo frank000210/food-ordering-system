@@ -1,77 +1,16 @@
 'use strict';
-const fs = require('node:fs');
-const path = require('node:path');
-const { DatabaseSync } = require('node:sqlite');
-const { hashPassword } = require('./auth');
+const { MongoClient } = require('mongodb');
 const { nowLocal } = require('./time');
 
-const SCHEMA = `
-CREATE TABLE IF NOT EXISTS settings (
-  key   TEXT PRIMARY KEY,
-  value TEXT NOT NULL DEFAULT ''
-);
-
-CREATE TABLE IF NOT EXISTS admins (
-  id            INTEGER PRIMARY KEY AUTOINCREMENT,
-  username      TEXT NOT NULL UNIQUE,
-  password_hash TEXT NOT NULL,
-  created_at    TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS sessions (
-  token      TEXT PRIMARY KEY,
-  admin_id   INTEGER NOT NULL REFERENCES admins(id) ON DELETE CASCADE,
-  expires_at INTEGER NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS categories (
-  id         INTEGER PRIMARY KEY AUTOINCREMENT,
-  name       TEXT NOT NULL,
-  sort_order INTEGER NOT NULL DEFAULT 0,
-  active     INTEGER NOT NULL DEFAULT 1
-);
-
-CREATE TABLE IF NOT EXISTS menu_items (
-  id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
-  name        TEXT NOT NULL,
-  description TEXT NOT NULL DEFAULT '',
-  price       INTEGER NOT NULL CHECK (price >= 0),
-  image_url   TEXT NOT NULL DEFAULT '',
-  available   INTEGER NOT NULL DEFAULT 1,
-  sort_order  INTEGER NOT NULL DEFAULT 0,
-  created_at  TEXT NOT NULL,
-  updated_at  TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS orders (
-  id             INTEGER PRIMARY KEY AUTOINCREMENT,
-  order_no       TEXT NOT NULL UNIQUE,
-  customer_name  TEXT NOT NULL,
-  customer_phone TEXT NOT NULL DEFAULT '',
-  order_type     TEXT NOT NULL DEFAULT 'takeout',
-  pickup_time    TEXT NOT NULL DEFAULT '',
-  note           TEXT NOT NULL DEFAULT '',
-  total          INTEGER NOT NULL,
-  status         TEXT NOT NULL DEFAULT 'pending',
-  order_date     TEXT NOT NULL,
-  created_at     TEXT NOT NULL,
-  updated_at     TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_orders_date ON orders(order_date);
-CREATE INDEX IF NOT EXISTS idx_orders_phone ON orders(customer_phone);
-
-CREATE TABLE IF NOT EXISTS order_items (
-  id           INTEGER PRIMARY KEY AUTOINCREMENT,
-  order_id     INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
-  menu_item_id INTEGER REFERENCES menu_items(id) ON DELETE SET NULL,
-  item_name    TEXT NOT NULL,
-  unit_price   INTEGER NOT NULL,
-  quantity     INTEGER NOT NULL CHECK (quantity > 0),
-  subtotal     INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id);
-`;
+/*
+ * Collections (database name from MONGODB_DB, default "food_ordering"):
+ *   settings   { _id: key, value }
+ *   counters   { _id: name, seq }            — integer ids and per-day order numbers
+ *   sessions   { _id: token, username, expires_at: Date }   (TTL index)
+ *   categories { _id: int, name, sort_order, active }
+ *   menu_items { _id: int, category_id, name, description, price, image_url, available, sort_order, ... }
+ *   orders     { _id: int, order_no, access_token, customer_*, items: [...snapshot], total, status, ... }
+ */
 
 const DEFAULT_SETTINGS = {
   store_name: '好食光便當',
@@ -83,12 +22,15 @@ const DEFAULT_SETTINGS = {
   is_open: '1',
 };
 
-function seedDemoMenu(db) {
+/** Atomically increment and return a named counter. */
+async function nextSeq(db, name) {
+  const doc = await db.collection('counters').findOneAndUpdate(
+    { _id: name }, { $inc: { seq: 1 } }, { upsert: true, returnDocument: 'after' });
+  return doc.seq;
+}
+
+async function seedDemoMenu(db) {
   const now = nowLocal();
-  const insertCat = db.prepare('INSERT INTO categories (name, sort_order) VALUES (?, ?)');
-  const insertItem = db.prepare(`INSERT INTO menu_items
-    (category_id, name, description, price, sort_order, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)`);
   const menu = [
     ['便當', [
       ['招牌排骨便當', '酥炸大排骨、三樣時蔬、滷蛋', 110],
@@ -104,51 +46,49 @@ function seedDemoMenu(db) {
       ['味噌湯', '豆腐、海帶芽', 25],
     ]],
   ];
-  menu.forEach(([cat, items], ci) => {
-    const { lastInsertRowid: catId } = insertCat.run(cat, ci + 1);
-    items.forEach(([name, desc, price], ii) => {
-      insertItem.run(catId, name, desc, price, ii + 1, now, now);
-    });
-  });
-}
-
-function openDatabase(file) {
-  const dbFile = file || process.env.DB_FILE || path.join(__dirname, '..', 'data', 'ordering.db');
-  if (dbFile !== ':memory:') fs.mkdirSync(path.dirname(dbFile), { recursive: true });
-  const db = new DatabaseSync(dbFile);
-  db.exec('PRAGMA foreign_keys = ON;');
-  if (dbFile !== ':memory:') db.exec('PRAGMA journal_mode = WAL;');
-  db.exec(SCHEMA);
-
-  const setSetting = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
-  for (const [k, v] of Object.entries(DEFAULT_SETTINGS)) setSetting.run(k, v);
-
-  const adminCount = db.prepare('SELECT COUNT(*) AS n FROM admins').get().n;
-  if (adminCount === 0) {
-    const username = process.env.ADMIN_USERNAME || 'admin';
-    const password = process.env.ADMIN_PASSWORD || 'admin123';
-    db.prepare('INSERT INTO admins (username, password_hash, created_at) VALUES (?, ?, ?)')
-      .run(username, hashPassword(password), nowLocal());
-  }
-
-  const itemCount = db.prepare('SELECT COUNT(*) AS n FROM menu_items').get().n;
-  const catCount = db.prepare('SELECT COUNT(*) AS n FROM categories').get().n;
-  if (itemCount === 0 && catCount === 0 && process.env.SEED_DEMO !== '0') seedDemoMenu(db);
-
-  return db;
-}
-
-/** Run fn inside a transaction; rolls back on error. */
-function transaction(db, fn) {
-  db.exec('BEGIN IMMEDIATE');
-  try {
-    const result = fn();
-    db.exec('COMMIT');
-    return result;
-  } catch (err) {
-    db.exec('ROLLBACK');
-    throw err;
+  for (const [ci, [cat, items]] of menu.entries()) {
+    const catId = await nextSeq(db, 'categories');
+    await db.collection('categories').insertOne({ _id: catId, name: cat, sort_order: ci + 1, active: 1 });
+    for (const [ii, [name, description, price]] of items.entries()) {
+      await db.collection('menu_items').insertOne({
+        _id: await nextSeq(db, 'menu_items'), category_id: catId, name, description, price,
+        image_url: '', available: 1, sort_order: ii + 1, created_at: now, updated_at: now,
+      });
+    }
   }
 }
 
-module.exports = { openDatabase, transaction };
+/**
+ * Connect to MongoDB, create indexes and seed defaults.
+ * Returns { client, db }.
+ */
+async function openDatabase({ uri, dbName } = {}) {
+  uri = uri || process.env.MONGODB_URI;
+  if (!uri) throw new Error('缺少 MONGODB_URI 環境變數');
+  const client = new MongoClient(uri, { serverSelectionTimeoutMS: 15000 });
+  await client.connect();
+  const db = client.db(dbName || process.env.MONGODB_DB || 'food_ordering');
+
+  await Promise.all([
+    db.collection('sessions').createIndex({ expires_at: 1 }, { expireAfterSeconds: 0 }),
+    db.collection('orders').createIndex({ order_no: 1 }, { unique: true }),
+    db.collection('orders').createIndex({ order_date: 1 }),
+    db.collection('orders').createIndex({ customer_phone: 1 }),
+    db.collection('orders').createIndex({ status: 1 }),
+    db.collection('menu_items').createIndex({ category_id: 1 }),
+  ]);
+
+  await db.collection('settings').bulkWrite(Object.entries(DEFAULT_SETTINGS).map(([k, v]) => ({
+    updateOne: { filter: { _id: k }, update: { $setOnInsert: { value: v } }, upsert: true },
+  })));
+
+  const [itemCount, catCount] = await Promise.all([
+    db.collection('menu_items').estimatedDocumentCount(),
+    db.collection('categories').estimatedDocumentCount(),
+  ]);
+  if (itemCount === 0 && catCount === 0 && process.env.SEED_DEMO !== '0') await seedDemoMenu(db);
+
+  return { client, db };
+}
+
+module.exports = { openDatabase, nextSeq };

@@ -178,7 +178,7 @@
       });
       try { sessionStorage.setItem('last_order', JSON.stringify(order)); } catch { /* ignore */ }
       cart.clear(); saveCart();
-      location.href = `/order?no=${encodeURIComponent(order.order_no)}`;
+      location.href = `/order?no=${encodeURIComponent(order.order_no)}&t=${encodeURIComponent(order.access_token)}`;
     } catch (err) {
       toast(err.message, 'error');
       renderCart();
@@ -190,6 +190,7 @@
       const data = await api('/api/menu');
       storeOpen = data.store.is_open;
       renderStore(data.store);
+      if (data.admin_url) $('adminLink').href = data.admin_url;
       for (const c of data.categories) for (const m of c.items) items.set(m.id, m);
       loadCart();
       renderMenu(data.categories);

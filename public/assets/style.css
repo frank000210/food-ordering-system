@@ -120,6 +120,7 @@ textarea { resize: vertical; min-height: 64px; }
 .site-nav { display: flex; gap: 4px; }
 .site-nav a { color: #e9dfd2; text-decoration: none; padding: 6px 12px; border-radius: 999px; font-weight: 600; font-size: 14px; }
 .site-nav a.active, .site-nav a:hover { background: rgba(255,255,255,.12); color: #fff; }
+.site-nav a.nav-admin { margin-left: 8px; border: 1px solid rgba(255,255,255,.35); }
 
 .hero { padding: 32px 0 20px; border-bottom: 1px solid var(--line); }
 .hero h1 { font-family: var(--font-display); font-size: clamp(26px, 4vw, 36px); margin-bottom: 6px; }

@@ -4,37 +4,35 @@ const crypto = require('node:crypto');
 const COOKIE_NAME = 'admin_session';
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000; // 8 hours
 
-function hashPassword(password) {
-  const salt = crypto.randomBytes(16);
-  const hash = crypto.scryptSync(password, salt, 64);
-  return `scrypt$${salt.toString('hex')}$${hash.toString('hex')}`;
-}
-
-function verifyPassword(password, stored) {
-  const [scheme, saltHex, hashHex] = String(stored).split('$');
-  if (scheme !== 'scrypt' || !saltHex || !hashHex) return false;
-  const expected = Buffer.from(hashHex, 'hex');
-  const actual = crypto.scryptSync(String(password), Buffer.from(saltHex, 'hex'), expected.length);
-  return crypto.timingSafeEqual(expected, actual);
-}
-
 function parseCookies(header) {
   const out = {};
   if (!header) return out;
   for (const part of header.split(';')) {
     const idx = part.indexOf('=');
     if (idx < 0) continue;
-    out[part.slice(0, idx).trim()] = decodeURIComponent(part.slice(idx + 1).trim());
+    try { out[part.slice(0, idx).trim()] = decodeURIComponent(part.slice(idx + 1).trim()); } catch { /* skip */ }
   }
   return out;
 }
 
-function createAuth(db) {
-  const insertSession = db.prepare('INSERT INTO sessions (token, admin_id, expires_at) VALUES (?, ?, ?)');
-  const findSession = db.prepare(`SELECT s.token, s.expires_at, a.id, a.username
-    FROM sessions s JOIN admins a ON a.id = s.admin_id WHERE s.token = ?`);
-  const deleteSession = db.prepare('DELETE FROM sessions WHERE token = ?');
-  const purgeExpired = db.prepare('DELETE FROM sessions WHERE expires_at < ?');
+/** Constant-time string comparison (hash first so lengths always match). */
+function safeEqual(a, b) {
+  const ha = crypto.createHash('sha256').update(String(a)).digest();
+  const hb = crypto.createHash('sha256').update(String(b)).digest();
+  return crypto.timingSafeEqual(ha, hb);
+}
+
+/**
+ * Admin credentials come from the environment (ADMIN / ADMIN_PASSWORD), never from the database.
+ * Without ADMIN_PASSWORD the back office stays locked.
+ */
+function createAuth(db, { credentials } = {}) {
+  const sessions = db.collection('sessions');
+  const creds = credentials || {
+    username: process.env.ADMIN || 'admin',
+    password: process.env.ADMIN_PASSWORD || '',
+  };
+  if (!creds.password) console.warn('[auth] 未設定 ADMIN_PASSWORD，後台將無法登入');
 
   // Simple in-memory login throttle: max 5 failures per 15 minutes per IP.
   const failures = new Map();
@@ -53,40 +51,54 @@ function createAuth(db) {
     else rec.count += 1;
   }
 
-  function startSession(res, adminId, secure) {
-    purgeExpired.run(Date.now());
+  const isConfigured = () => Boolean(creds.password);
+
+  function checkCredentials(username, password) {
+    if (!isConfigured()) return false;
+    // Evaluate both comparisons to avoid leaking which one failed via timing.
+    const userOk = safeEqual(username || '', creds.username);
+    const passOk = safeEqual(password || '', creds.password);
+    return userOk && passOk;
+  }
+
+  async function startSession(res, username, secure) {
     const token = crypto.randomBytes(32).toString('hex');
-    insertSession.run(token, adminId, Date.now() + SESSION_TTL_MS);
+    await sessions.insertOne({ _id: token, username, expires_at: new Date(Date.now() + SESSION_TTL_MS) });
     const flags = [`${COOKIE_NAME}=${token}`, 'Path=/', 'HttpOnly', 'SameSite=Lax',
       `Max-Age=${SESSION_TTL_MS / 1000}`];
     if (secure) flags.push('Secure');
     res.setHeader('Set-Cookie', flags.join('; '));
   }
 
-  function endSession(req, res) {
+  async function endSession(req, res) {
     const token = parseCookies(req.headers.cookie)[COOKIE_NAME];
-    if (token) deleteSession.run(token);
+    if (token) await sessions.deleteOne({ _id: token });
     res.setHeader('Set-Cookie', `${COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
   }
 
-  function currentAdmin(req) {
+  async function currentAdmin(req) {
     const token = parseCookies(req.headers.cookie)[COOKIE_NAME];
     if (!token) return null;
-    const row = findSession.get(token);
+    const row = await sessions.findOne({ _id: token });
     if (!row) return null;
-    if (row.expires_at < Date.now()) { deleteSession.run(token); return null; }
-    return { id: row.id, username: row.username };
+    // TTL cleanup runs about once a minute, so double-check expiry; also drop sessions
+    // issued for a username that is no longer the configured admin.
+    if (row.expires_at < new Date() || row.username !== creds.username) {
+      await sessions.deleteOne({ _id: token });
+      return null;
+    }
+    return { username: row.username };
   }
 
-  function requireAdmin(req, res, next) {
-    const admin = currentAdmin(req);
+  async function requireAdmin(req, res, next) {
+    const admin = await currentAdmin(req);
     if (!admin) return res.status(401).json({ error: '請先登入後台' });
     req.admin = admin;
     next();
   }
 
   return { startSession, endSession, currentAdmin, requireAdmin, isThrottled, recordFailure,
-    clearFailures: (ip) => failures.delete(ip) };
+    checkCredentials, isConfigured, clearFailures: (ip) => failures.delete(ip) };
 }
 
-module.exports = { hashPassword, verifyPassword, createAuth };
+module.exports = { createAuth, parseCookies };

@@ -29,6 +29,11 @@
   </div>
   <script src="/assets/common.js"></script>
   <script>
+    const goNext = () => {
+      const next = new URLSearchParams(location.search).get('next');
+      location.href = next && next.startsWith('/admin') ? next : '/admin/';
+    };
+    App.api('/api/admin/me').then(goNext).catch(() => {});
     document.getElementById('loginForm').addEventListener('submit', async (e) => {
       e.preventDefault();
       try {
@@ -36,8 +41,7 @@
           username: document.getElementById('username').value.trim(),
           password: document.getElementById('password').value,
         } });
-        const next = new URLSearchParams(location.search).get('next');
-        location.href = next && next.startsWith('/admin') ? next : '/admin/';
+        goNext();
       } catch (err) {
         App.toast(err.message, 'error');
       }

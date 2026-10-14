@@ -63,7 +63,8 @@ function createRouter() {
 
   function serveStatic(root, req, res) {
     if (req.method !== 'GET' && req.method !== 'HEAD') return false;
-    let rel = decodeURIComponent(req.path);
+    let rel;
+    try { rel = decodeURIComponent(req.path); } catch { throw new HttpError(400, '網址格式錯誤'); }
     if (rel.endsWith('/')) rel += 'index.html';
     let file = path.normalize(path.join(root, rel));
     if (!file.startsWith(root + path.sep) && file !== root) return false;
